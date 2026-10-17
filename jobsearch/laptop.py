@@ -183,6 +183,13 @@ def apply_flow(r: db.Run, page, app: dict, header, profile, evidence, tmp: Path)
     return False
 
 
+def _body(page) -> str:
+    try:
+        return page.inner_text("body").lower()[:30000]
+    except Exception:
+        return ""
+
+
 def _state(page) -> str:
     try:
         return page.url + "|" + str(len(page.evaluate(FIELDS_JS))) + "|" + page.inner_text("body")[:500]
@@ -314,7 +321,14 @@ def assist() -> None:
             ctx = _browser(pw, headless=False)
             for row in rows:
                 page = ctx.new_page()
-                content = conn.execute("select content from resume_versions where id=%s", (row["resume_version_id"],)).fetchone()["content"]
+                rv = (conn.execute("select content from resume_versions where id=%s", (row["resume_version_id"],)).fetchone()
+                      if row["resume_version_id"] else None) or conn.execute(
+                    "select content from resume_versions order by created_at desc limit 1").fetchone()
+                if rv is None:
+                    print(f"\n→ {row['company']} — {row['title']}: skipped (no tailored resume yet)")
+                    page.close()
+                    continue
+                content = rv["content"]
                 pdf = resume_pdf.render_pdf(content, header, Path(tmp) / resume_pdf.safe_name("Muskan_Nahata", row["company"] or "", row["title"]))
                 page.goto(row["url"], wait_until="domcontentloaded")
                 _pause(2, 3)
@@ -329,11 +343,14 @@ def assist() -> None:
                     page.set_default_timeout(30000)
                     if skipped:
                         print(f"  ({skipped} field(s) couldn't be auto-filled — please fill them yourself)")
+                baseline = _body(page)
                 print(f"\n→ {row['company']} — {row['title']}: finish the {row['type'].lower()} step and click Submit (waiting up to 10 min)…")
                 deadline = time.time() + 600
                 done = False
                 while time.time() < deadline and not page.is_closed():
-                    if any(t in page.inner_text("body").lower() for t in CONFIRM_TEXT):
+                    now = _body(page)
+                    # Only a confirmation phrase that was NOT already on the page when we opened it counts.
+                    if any(t in now and t not in baseline for t in CONFIRM_TEXT):
                         done = True
                         break
                     time.sleep(3)

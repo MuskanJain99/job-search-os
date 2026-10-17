@@ -10,6 +10,7 @@ Free-text motivation questions may be GENERATED from evidence; factual questions
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -33,6 +34,35 @@ TASK = """For each form field, choose the answer from <profile> (cite its id in 
   2-4 sentences using ONLY <evidence> facts.
 - Anything else with no profile entry: answer=null, basis=UNKNOWN. Never guess.
 - Resume/cover-letter file fields: answer="__RESUME__" or "__COVER_LETTER__"."""
+
+
+# Unambiguous contact/identity fields are filled straight from the approved profile (no model guess).
+_RULES: list[tuple[str, str]] = [  # (regex on lowercased label, profile id)
+    (r"\b(country code|dial(ing)? code|phone.{0,12}country|country.{0,12}(phone|code))\b", "CON-01"),
+    (r"\b(phone|mobile|telephone|contact number|cell)\b", "CON-02"),
+    (r"\be-?mail\b", "CON-03"),
+    (r"\blinkedin\b", "CON-04"),
+    (r"\bgit ?hub\b", "CON-05"),
+    (r"^(legal |first |given )?(first )?name$|^first name|^given name", "ID-01"),
+    (r"^last name|^surname|^family name|legal last name", "ID-02"),
+    (r"^(full |legal full )?name$|^your name$", "ID-03"),
+    (r"^country( of residence)?$|^country/region$", "LOC-01"),
+]
+
+
+def deterministic(fields: list[dict], profile: list[dict]) -> dict[str, tuple[str, str]]:
+    """field_id -> (value, profile_id) for plain contact fields. Only VALUE entries are used."""
+    by_id = {p["id"]: p for p in profile if p["answer_type"] == "VALUE" and p.get("answer")}
+    out: dict[str, tuple[str, str]] = {}
+    for f in fields:
+        if f.get("type") in ("file", "radio", "checkbox", "textarea"):
+            continue
+        label = re.sub(r"[*:]", "", f.get("label", "")).strip().lower()
+        for pattern, pid in _RULES:
+            if re.search(pattern, label) and pid in by_id:
+                out[f["field_id"]] = (str(by_id[pid]["answer"]).strip(), pid)
+                break
+    return out
 
 
 @dataclass
@@ -61,6 +91,7 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
     out = ask_json(TASK.format(today=date.today().isoformat()), payload, FormAnswers, fast=True, max_tokens=6000)
 
     proposed = {a.field_id: a for a in out.answers}
+    det = deterministic(fields, profile)
     values: dict[str, str] = {}
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []
@@ -68,6 +99,10 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
         fid, label, required = f["field_id"], f.get("label", ""), bool(f.get("required"))
         a = proposed.get(fid)
         low = label.lower()
+        if fid in det and low.strip() not in user_answers:
+            values[fid] = det[fid][0]
+            prov.append({"question_text": label[:500], "profile_id": det[fid][1], "answer": values[fid], "basis": "PROFILE"})
+            continue
         if low.strip() in user_answers:  # her own answer always wins, including for hard-stop questions
             values[fid] = user_answers[low.strip()]
             prov.append({"question_text": label[:500], "profile_id": None, "answer": values[fid], "basis": "USER"})

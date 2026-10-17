@@ -10,6 +10,7 @@ filled and screenshotted, and the application stays READY.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -204,10 +205,7 @@ def fill(page, f: dict, value: str, pdf: Path, cover: str | None) -> None:
             loc.set_input_files(str(p))
         return
     if t == "select":
-        try:
-            loc.select_option(label=value)
-        except Exception:
-            loc.select_option(value=value)
+        _select_fuzzy(loc, value)
         return
     if t in ("radio", "checkbox"):
         for ref, label in zip(refs, f.get("options") or [], strict=False):
@@ -221,7 +219,47 @@ def fill(page, f: dict, value: str, pdf: Path, cover: str | None) -> None:
         page.wait_for_timeout(700)
         page.keyboard.press("Enter")
         return
+    if re.search(r"country code|dial", f.get("label", ""), re.I) or (value.startswith("+") and value[1:].isdigit()):
+        if _pick_phone_country(page, loc, value):
+            return
+    if re.search(r"phone|mobile|telephone", f.get("label", ""), re.I):
+        _pick_phone_country(page, loc, "+91")  # numbers in the profile are Indian; no-op if there is no flag widget
     loc.fill(value)
+
+
+def _select_fuzzy(loc, value: str) -> None:
+    """Pick an <option> by exact label, then by value, then by an option whose text contains the answer
+    (e.g. '+91' -> 'India (+91)', 'India' -> 'India')."""
+    try:
+        loc.select_option(label=value)
+        return
+    except Exception:
+        pass
+    opts = loc.evaluate("el => [...el.options].map(o => [o.text.trim(), o.value])")
+    want = value.strip().lower()
+    for text, val in opts:
+        if want == text.lower() or want == val.lower():
+            loc.select_option(value=val)
+            return
+    for text, val in opts:
+        if want and (want in text.lower() or (want.lstrip("+") and want in val.lower())):
+            loc.select_option(value=val)
+            return
+    raise ValueError("no matching option")
+
+
+def _pick_phone_country(page, number_or_select, value: str) -> bool:
+    """Handle intl-tel-input style widgets: open the flag dropdown next to the field and choose the dial code."""
+    code = value.lstrip("+")
+    try:
+        root = number_or_select.locator("xpath=ancestor::*[contains(@class,'iti')][1]")
+        if root.count() == 0:
+            return False
+        root.locator(".iti__selected-country, .iti__selected-flag, button").first.click()
+        page.locator(f"li.iti__country[data-dial-code='{code}']").first.click(timeout=3000)
+        return True
+    except Exception:
+        return False
 
 
 def try_fill(page, f: dict, value: str, pdf: Path, cover: str | None, timeout_ms: int = 6000) -> bool:
