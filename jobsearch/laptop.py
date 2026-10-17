@@ -80,6 +80,12 @@ def auto() -> None:
         if cfg["paused"]:
             r.summary["skipped"] = "paused"
             return
+        from . import focus
+
+        why = focus.busy()
+        if why:  # never pop a Chrome window while she is in a meeting/interview
+            r.summary["skipped"] = f"focus: {why}"
+            return
         if not resume_pdf.ensure_default(r):
             return
         usage = db.daily_usage(conn)

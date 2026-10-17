@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     p_res = sub.add_parser("resume", help="manage the resume that gets attached")
     p_res.add_argument("action", choices=["set-default"])
     p_res.add_argument("path")
+    p_foc = sub.add_parser("focus", help="do-not-disturb: no windows/pushes for a while, e.g. `focus 2h` or `focus off`")
+    p_foc.add_argument("spec")
     args = ap.parse_args(argv)
 
     if args.cmd == "discover":
@@ -63,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
         from . import laptop
 
         {"auto": laptop.auto, "assist": laptop.assist, "login": laptop.login}[args.mode]()
+    elif args.cmd == "focus":
+        from . import focus
+
+        print(focus.set_manual(args.spec))
     elif args.cmd == "resume":
         from . import db, resume_pdf
 

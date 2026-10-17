@@ -43,6 +43,7 @@ class Settings:
     google_client_secret: str = field(default_factory=lambda: _str("GOOGLE_CLIENT_SECRET"))
     google_refresh_token: str = field(default_factory=lambda: _str("GOOGLE_REFRESH_TOKEN"))
     owner_email: str = field(default_factory=lambda: _str("OWNER_EMAIL"))
+    quiet_hours: str = field(default_factory=lambda: _str("QUIET_HOURS"))
     ntfy_topic: str = field(default_factory=lambda: _str("NTFY_TOPIC"))  # optional phone push via ntfy.sh
     twilio_sid: str = field(default_factory=lambda: _str("TWILIO_ACCOUNT_SID"))  # optional SMS for urgent alerts
     twilio_token: str = field(default_factory=lambda: _str("TWILIO_AUTH_TOKEN"))

@@ -40,13 +40,16 @@ def alert(r: db.Run, kind: str, key: str, text: str, *, live: bool = False) -> b
         return False
     text = text.strip().replace("\n", " ")[:200]
     delivered = []
+    from . import focus
+
+    quiet = focus.busy()  # busy: email only (silent), no push or SMS
     if settings.can_write_external() or live:
         if settings.google_configured and settings.owner_email:
             from .google_api import send_email
 
             send_email(settings.owner_email, f"[Job Search] ACTION: {text[:80]}", text + "\n\n— job-search-os")
             delivered.append("email")
-        if settings.ntfy_topic:  # iPhone/Android push via the free ntfy app
+        if settings.ntfy_topic and not quiet:  # iPhone/Android push via the free ntfy app
             try:
                 httpx.post(f"https://ntfy.sh/{settings.ntfy_topic}", content=text.encode(),
                            headers={"Title": "Job Search", "Priority": "urgent" if kind == "captcha" else
@@ -55,7 +58,7 @@ def alert(r: db.Run, kind: str, key: str, text: str, *, live: bool = False) -> b
                 delivered.append("push")
             except httpx.HTTPError:
                 pass
-        if kind in URGENT and settings.twilio_sid and settings.owner_phone:
+        if kind in URGENT and settings.twilio_sid and settings.owner_phone and not quiet:
             try:
                 httpx.post(f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_sid}/Messages.json",
                            auth=(settings.twilio_sid, settings.twilio_token),

@@ -43,6 +43,10 @@ def ask(r: db.Run, app_id: str, company: str, title: str, questions: list[tuple[
     if not questions:
         return {}
     token = secrets.token_hex(3)
+    from . import focus
+
+    if focus.busy():  # no push, no waiting: record blockers; her late reply is still picked up by the inbox stage
+        wait_s = 0
     if not settings.google_configured or not settings.owner_email:
         _block_all(r, app_id, company, questions, token)
         return {}
@@ -54,7 +58,8 @@ def ask(r: db.Run, app_id: str, company: str, title: str, questions: list[tuple[
             + "\n\nReply to this email with the answers, one per line in the same order (or '1: …'). "
               "Write 'skip' to drop this job. Add 'save' on its own line to remember these answers for future applications.\n")
     sent = send_email(settings.owner_email, f"{SUBJECT_PREFIX}{token}: {company[:40]} — {title[:40]}", body)
-    _push(f"Answer needed: {company} — {title[:60]}. {len(questions)} question(s) — reply to the email.")
+    if wait_s != 0:
+        _push(f"Answer needed: {company} — {title[:60]}. {len(questions)} question(s) — reply to the email.")
     r.audit("human.asked", "applications", app_id, token=token, n=len(questions))
     r.bump("questions_asked")
 
