@@ -82,6 +82,12 @@ def run(workflow: str) -> Iterator[Run]:
     """Opens a connection and a runs row; closes the row with OK / PARTIAL / FAILED."""
     conn = connect()
     r = Run(conn=conn, workflow=workflow)
+    # A cancelled/timed-out job never closes its row; close stale ones (older than 2h) for this workflow.
+    conn.execute(
+        "update runs set status='PARTIAL', finished_at=now(), summary=summary || %s "
+        "where workflow=%s and status='RUNNING' and started_at < now() - interval '2 hours'",
+        (Jsonb({"note": "closed as stale (job cancelled or timed out)"}), workflow),
+    )
     row = conn.execute(
         "insert into runs (workflow, status, summary, actor) values (%s,'RUNNING',%s,%s) returning id",
         (workflow, Jsonb({"dry_run": settings.dry_run}), ACTOR),
