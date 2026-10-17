@@ -26,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     p_ing.add_argument("url")
     p_lap = sub.add_parser("laptop", help="laptop helper (signed-in Chrome profile)")
     p_lap.add_argument("mode", choices=["auto", "assist", "login"])
+    p_res = sub.add_parser("resume", help="manage the resume that gets attached")
+    p_res.add_argument("action", choices=["set-default"])
+    p_res.add_argument("path")
     args = ap.parse_args(argv)
 
     if args.cmd == "discover":
@@ -60,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
         from . import laptop
 
         {"auto": laptop.auto, "assist": laptop.assist, "login": laptop.login}[args.mode]()
+    elif args.cmd == "resume":
+        from . import db, resume_pdf
+
+        with db.run("resume_upload") as r:
+            digest = resume_pdf.store_default(r.conn, args.path)
+            r.audit("resume.set_default", "resume_files", "default", sha256=digest[:16])
+        print("Default resume saved. Every application will attach this file.")
     return 0
 
 

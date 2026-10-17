@@ -211,11 +211,12 @@ def prepare(r: db.Run, job_id: str, p: Posting, company: str, score: int, eviden
         return ""
     app_id = str(app["id"])
     job = {"title": p.title, "company": company, "jd_text": p.description}
-    content, used, emphasis = tailor.tailor(job, evidence, skeleton)
-    rv = conn.execute(
-        "insert into resume_versions (job_id, label, claim_ids, generator_version, summary, content) values (%s,%s,%s,%s,%s,%s) returning id",
-        (job_id, f"{company} — {p.title}", used, tailor.GENERATOR_VERSION, emphasis[:500], Jsonb(content))).fetchone()
-    conn.execute("update applications set resume_version_id=%s where id=%s", (rv["id"], app_id))
+    if settings.resume_mode == "tailored":  # off by default: her own resume is attached as-is
+        content, used, emphasis = tailor.tailor(job, evidence, skeleton)
+        rv = conn.execute(
+            "insert into resume_versions (job_id, label, claim_ids, generator_version, summary, content) values (%s,%s,%s,%s,%s,%s) returning id",
+            (job_id, f"{company} — {p.title}", used, tailor.GENERATOR_VERSION, emphasis[:500], Jsonb(content))).fetchone()
+        conn.execute("update applications set resume_version_id=%s where id=%s", (rv["id"], app_id))
 
     stopped = False
     if p.ats == "greenhouse":

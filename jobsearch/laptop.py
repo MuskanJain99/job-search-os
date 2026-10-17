@@ -80,6 +80,8 @@ def auto() -> None:
         if cfg["paused"]:
             r.summary["skipped"] = "paused"
             return
+        if not resume_pdf.ensure_default(r):
+            return
         usage = db.daily_usage(conn)
         budget = max(0, cfg["max_applications_per_day"] - (usage["applications_today"] or 0))
         li_budget = max(0, min(5, cfg["max_linkedin_messages_per_day"]))  # LinkedIn applies kept low
@@ -129,8 +131,7 @@ def auto() -> None:
 def apply_flow(r: db.Run, page, app: dict, header, profile, evidence, tmp: Path) -> bool:
     """Multi-step apply loop. Returns True if a site warning was seen (caller stops that board)."""
     conn, app_id = r.conn, str(app["id"])
-    content = conn.execute("select content from resume_versions where id=%s", (app["resume_version_id"],)).fetchone()["content"]
-    pdf = resume_pdf.render_pdf(content, header, tmp / resume_pdf.safe_name("Muskan_Nahata", app["company"] or "", app["title"]))
+    pdf = resume_pdf.resume_for(conn, app, header, tmp / app_id)
     page.goto(app["url"], wait_until="domcontentloaded", timeout=60000)
     _pause()
     page = _follow_external_apply(page)
@@ -346,15 +347,7 @@ def assist() -> None:
             ctx = _browser(pw, headless=False)
             for row in rows:
                 page = ctx.new_page()
-                rv = (conn.execute("select content from resume_versions where id=%s", (row["resume_version_id"],)).fetchone()
-                      if row["resume_version_id"] else None) or conn.execute(
-                    "select content from resume_versions order by created_at desc limit 1").fetchone()
-                if rv is None:
-                    print(f"\n→ {row['company']} — {row['title']}: skipped (no tailored resume yet)")
-                    page.close()
-                    continue
-                content = rv["content"]
-                pdf = resume_pdf.render_pdf(content, header, Path(tmp) / resume_pdf.safe_name("Muskan_Nahata", row["company"] or "", row["title"]))
+                pdf = resume_pdf.resume_for(conn, row, header, Path(tmp) / str(row["id"]))
                 page.goto(row["url"], wait_until="domcontentloaded")
                 _pause(2, 3)
                 fields = page.evaluate(FIELDS_JS)

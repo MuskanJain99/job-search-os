@@ -50,3 +50,63 @@ def render_pdf(content: dict, header: dict, out_path: Path) -> Path:
     with ThreadPoolExecutor(max_workers=1) as ex:
         ex.submit(_render, html, out_path).result()
     return out_path
+
+
+DEFAULT_NAME = "default"
+
+
+class NoDefaultResume(RuntimeError):
+    pass
+
+
+def store_default(conn, path: Path) -> str:
+    """Save her own resume PDF to the database so cloud runs can attach it."""
+    import hashlib
+
+    data = Path(path).read_bytes()
+    if not data.startswith(b"%PDF"):
+        raise ValueError("not a PDF file")
+    digest = hashlib.sha256(data).hexdigest()
+    conn.execute(
+        "insert into resume_files (name, filename, pdf, sha256) values (%s,%s,%s,%s) "
+        "on conflict (name) do update set filename=excluded.filename, pdf=excluded.pdf, sha256=excluded.sha256, uploaded_at=now()",
+        (DEFAULT_NAME, Path(path).name, data, digest))
+    return digest
+
+
+def default_pdf(conn, out_dir: Path) -> Path:
+    row = conn.execute("select filename, pdf from resume_files where name=%s", (DEFAULT_NAME,)).fetchone()
+    if not row:
+        raise NoDefaultResume("default resume not uploaded — run: jobsearch resume set-default <path to PDF>")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / (row["filename"] or "Muskan_Nahata.pdf")
+    out.write_bytes(bytes(row["pdf"]))
+    return out
+
+
+def resume_for(conn, app: dict, header: dict, out_dir: Path) -> Path:
+    """The file to attach for this application: her default resume unless RESUME_MODE=tailored."""
+    from .config import settings
+
+    if settings.resume_mode != "tailored" or not app.get("resume_version_id"):
+        return default_pdf(conn, out_dir)
+    row = conn.execute("select content from resume_versions where id=%s", (app["resume_version_id"],)).fetchone()
+    if not row:
+        return default_pdf(conn, out_dir)
+    return render_pdf(row["content"], header, out_dir / safe_name("Muskan_Nahata", app.get("company") or "", app.get("title") or ""))
+
+
+def ensure_default(r) -> bool:
+    """Called at the start of submit runs: without her resume nothing can be attached, so stop and tell her once a day."""
+    from .config import settings
+
+    if settings.resume_mode == "tailored":
+        return True
+    if r.conn.execute("select 1 from resume_files where name=%s", (DEFAULT_NAME,)).fetchone():
+        return True
+    from . import alerts
+
+    r.partial("default resume not uploaded")
+    alerts.alert(r, "pipeline_broken", "no-default-resume",
+                 "Job search paused submitting: upload your resume once with `jobsearch resume set-default <file.pdf>` on your Mac.")
+    return False

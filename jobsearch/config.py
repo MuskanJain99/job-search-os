@@ -49,6 +49,9 @@ class Settings:
     twilio_from: str = field(default_factory=lambda: _str("TWILIO_FROM"))
     owner_phone: str = field(default_factory=lambda: _str("OWNER_PHONE"))  # E.164, e.g. +91XXXXXXXXXX
     # How long to wait for Muskan on ANY human step (CAPTCHA, code, sign-in, question) before moving on.
+    # "default" = always attach Muskan's own resume (uploaded with `jobsearch resume set-default`);
+    # "tailored" = generate an evidence-grounded resume per job.
+    resume_mode: str = field(default_factory=lambda: (_str("RESUME_MODE", "default") or "default").lower())
     captcha_wait_s: int = field(default_factory=lambda: int(_str("HUMAN_WAIT_SECONDS", "120") or 120))
     timezone: str = field(default_factory=lambda: _str("OWNER_TIMEZONE", "Asia/Kolkata"))
 

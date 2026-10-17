@@ -86,6 +86,8 @@ def run() -> None:
         if cfg["paused"]:
             r.summary["skipped"] = "paused"
             return
+        if not resume_pdf.ensure_default(r):
+            return
         usage = db.daily_usage(conn)
         budget = max(0, cfg["max_applications_per_day"] - (usage["applications_today"] or 0))
         queue = conn.execute(
@@ -120,8 +122,7 @@ def run() -> None:
 
 def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp: Path) -> None:
     conn, app_id = r.conn, str(app["id"])
-    content = conn.execute("select content from resume_versions where id=%s", (app["resume_version_id"],)).fetchone()["content"]
-    pdf = resume_pdf.render_pdf(content, header, tmp / resume_pdf.safe_name("Muskan_Nahata", app["company"] or "", app["title"]))
+    pdf = resume_pdf.resume_for(conn, app, header, tmp / app_id)
     url = _apply_url(app["channel"], app["url"])
     resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2500)
