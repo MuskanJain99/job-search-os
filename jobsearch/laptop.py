@@ -23,7 +23,7 @@ from . import accounts, alerts, answering, db, resume_pdf
 from . import answers as answers_mod
 from .config import settings
 from .log import get_logger
-from .submit import CONFIRM_TEXT, FIELDS_JS, _captcha, fill
+from .submit import CONFIRM_TEXT, FIELDS_JS, _captcha, try_fill
 
 log = get_logger("laptop")
 PROFILE_DIR = Path.home() / ".job-search-os" / "chrome-profile"
@@ -169,7 +169,7 @@ def apply_flow(r: db.Run, page, app: dict, header, profile, evidence, tmp: Path)
             by_id = {f["field_id"]: f for f in fields}
             for fid, value in res.values.items():
                 if fid in by_id and not _already_filled(page, by_id[fid]):
-                    fill(page, by_id[fid], value, pdf, None)
+                    try_fill(page, by_id[fid], value, pdf, None)
                     _pause(0.5, 1.5)
         if not _click_next(page):
             # Unknown layout: hand the open window to her for 2 minutes, then continue from wherever she leaves it.
@@ -322,9 +322,13 @@ def assist() -> None:
                 if fields:
                     res = answers_mod.resolve(fields, profile, evidence, row["title"], row["company"] or "")
                     by_id = {f["field_id"]: f for f in fields}
+                    skipped = 0
                     for fid, value in res.values.items():
-                        if fid in by_id:
-                            fill(page, by_id[fid], value, pdf, None)
+                        if fid in by_id and not try_fill(page, by_id[fid], value, pdf, None):
+                            skipped += 1
+                    page.set_default_timeout(30000)
+                    if skipped:
+                        print(f"  ({skipped} field(s) couldn't be auto-filled — please fill them yourself)")
                 print(f"\n→ {row['company']} — {row['title']}: finish the {row['type'].lower()} step and click Submit (waiting up to 10 min)…")
                 deadline = time.time() + 600
                 done = False

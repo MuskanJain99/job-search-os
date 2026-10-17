@@ -157,17 +157,24 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
                          (app_id, a["question_text"], a["profile_id"], a["answer"], a["basis"]))
 
     by_id = {f["field_id"]: f for f in fields}
+    failed = 0
     for fid, value in res.values.items():
         f = by_id.get(fid)
         if not f:
             continue
-        fill(page, f, value, pdf, app.get("cover_letter"))
+        if not try_fill(page, f, value, pdf, app.get("cover_letter")):
+            failed += 1
     shot = tmp / f"{app_id}.png"
     page.screenshot(path=str(shot), full_page=True)
 
     if not (settings.can_write_external() and settings.submit_enabled):
         r.bump("would_submit")
         r.audit("submit.dry_run", "applications", app_id, filled=len(res.values))
+        return
+    if failed:
+        # A field we meant to fill wasn't fillable: never submit a half-filled form from the cloud.
+        db.set_application_status(r, app_id, "READY", next_action="laptop_submit")
+        r.bump("fill_failed_to_laptop")
         return
     page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click()
     page.wait_for_timeout(6000)
@@ -215,6 +222,17 @@ def fill(page, f: dict, value: str, pdf: Path, cover: str | None) -> None:
         page.keyboard.press("Enter")
         return
     loc.fill(value)
+
+
+def try_fill(page, f: dict, value: str, pdf: Path, cover: str | None, timeout_ms: int = 6000) -> bool:
+    """fill() that never raises: a field that vanished or isn't interactable is skipped, not fatal."""
+    page.set_default_timeout(timeout_ms)
+    try:
+        fill(page, f, value, pdf, cover)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.info("could not fill a %s field: %s", f.get("type"), type(exc).__name__)
+        return False
 
 
 def _now():
