@@ -76,5 +76,10 @@ def run() -> None:
                         res.raise_for_status()
                         r.conn.execute("update applications set notion_page_id=%s where id=%s", (res.json()["id"], a["id"]))
                     r.bump("synced")
-                except httpx.HTTPError:
+                except httpx.HTTPError as exc:
                     r.bump("errors")
+                    resp = getattr(exc, "response", None)
+                    if resp is not None and "first_error" not in r.summary:
+                        r.summary["first_error"] = f"{resp.status_code} {resp.text[:300]}"
+                    elif resp is None and "first_error" not in r.summary:
+                        r.summary["first_error"] = type(exc).__name__
