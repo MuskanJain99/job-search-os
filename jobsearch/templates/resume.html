@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{ h.name }} — Resume</title>
+<style>
+  @page { size: A4; margin: 12mm 13mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; font-size: 9.6pt; line-height: 1.32; color: #111; margin: 0; }
+  h1 { font-size: 17pt; margin: 0 0 2pt; letter-spacing: .2pt; }
+  .contact { font-size: 8.8pt; color: #333; margin-bottom: 4pt; }
+  .headline { font-weight: 600; font-size: 10.2pt; margin: 2pt 0 4pt; }
+  h2 { font-size: 9.8pt; text-transform: uppercase; letter-spacing: .6pt; border-bottom: 1px solid #222;
+       margin: 7pt 0 3pt; padding-bottom: 1pt; }
+  .row { display: flex; justify-content: space-between; gap: 8pt; }
+  .role { font-weight: 700; } .co { font-weight: 400; } .muted { color: #444; white-space: nowrap; }
+  ul { margin: 1pt 0 4pt 13pt; padding: 0; } li { margin: 0 0 1.5pt; }
+  .skills div { margin-bottom: 1pt; } .skills b { font-weight: 600; }
+  p { margin: 0 0 3pt; }
+</style></head>
+<body>
+  <h1>{{ h.name }}</h1>
+  <div class="contact">{{ h.location }} · {{ h.phone }} · {{ h.email }} · {{ h.linkedin|replace("https://","")|replace("www.","") }} · {{ h.github|replace("https://","")|replace("www.","") }}</div>
+  <div class="headline">{{ c.headline }}</div>
+  <p>{{ c.summary }}</p>
+
+  <h2>Experience</h2>
+  {% for e in c.experience %}
+  <div class="row"><div><span class="role">{{ e.title }}</span> · <span class="co">{{ e.company }}</span></div>
+       <div class="muted">{{ e.location }} · {{ e.dates }}</div></div>
+  <ul>{% for b in e.bullets %}<li>{{ b.text }}</li>{% endfor %}</ul>
+  {% endfor %}
+
+  <h2>Skills</h2>
+  <div class="skills">{% for g in c.skills %}<div><b>{{ g.group }}:</b> {{ g["items"]|join(", ") }}</div>{% endfor %}</div>
+
+  <h2>Education</h2>
+  {% for ed in c.education %}
+  <div class="row"><div><span class="role">{{ ed.degree }}</span> · {{ ed.institution }}</div><div class="muted">{{ ed.dates }}</div></div>
+  {% endfor %}
+</body></html>

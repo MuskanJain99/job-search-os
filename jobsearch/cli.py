@@ -1,0 +1,67 @@
+"""Command line entry point: `jobsearch <stage>` / `python -m jobsearch <stage>`."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from .log import get_logger
+
+log = get_logger("cli")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="jobsearch", description="Automated, evidence-grounded job search pipeline")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name, help_ in [
+        ("discover", "find, verify, score and prepare jobs"),
+        ("submit", "submit READY applications on public employer forms (cloud)"),
+        ("outreach", "find contacts, send referral emails and follow-ups"),
+        ("inbox", "classify Gmail threads, book interviews, alert when needed"),
+        ("notion", "sync application state to Notion"),
+        ("digest", "send the weekly summary email"),
+    ]:
+        sub.add_parser(name, help=help_)
+    p_ing = sub.add_parser("ingest", help="add a pasted job link to the front of the queue")
+    p_ing.add_argument("url")
+    p_lap = sub.add_parser("laptop", help="laptop helper (signed-in Chrome profile)")
+    p_lap.add_argument("mode", choices=["auto", "assist", "login"])
+    args = ap.parse_args(argv)
+
+    if args.cmd == "discover":
+        from . import discover
+
+        discover.run()
+    elif args.cmd == "submit":
+        from . import submit
+
+        submit.run()
+    elif args.cmd == "outreach":
+        from . import outreach
+
+        outreach.run()
+    elif args.cmd == "inbox":
+        from . import inbox
+
+        inbox.run()
+    elif args.cmd == "notion":
+        from . import notion_sync
+
+        notion_sync.run()
+    elif args.cmd == "digest":
+        from . import digest
+
+        digest.run()
+    elif args.cmd == "ingest":
+        from . import ingest
+
+        ingest.run(args.url)
+    elif args.cmd == "laptop":
+        from . import laptop
+
+        {"auto": laptop.auto, "assist": laptop.assist, "login": laptop.login}[args.mode]()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

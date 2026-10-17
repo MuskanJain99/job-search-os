@@ -1,0 +1,95 @@
+name: pipeline
+
+# Runs on GitHub's servers — the owner's computer can be off.
+# All times below are UTC (IST = UTC+5:30).
+on:
+  schedule:
+    - cron: "*/30 1-17 * * *"   # inbox    — every 30 min, ~06:30–23:00 IST
+    - cron: "15 */3 * * *"      # discover — every 3 hours
+    - cron: "45 2-16/2 * * *"   # submit   — every 2 hours, ~08:15–22:15 IST
+    - cron: "5 4-13 * * *"      # outreach — hourly, ~09:35–18:35 IST (send window enforced in code)
+    - cron: "30 13 * * 0"       # digest   — Sunday ~19:00 IST
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage to run"
+        type: choice
+        options: [discover, submit, outreach, inbox, notion, digest, ingest]
+        default: discover
+      url:
+        description: "Job URL (only for stage=ingest)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: pipeline-${{ github.event.inputs.stage || github.event.schedule }}
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'anthropic' }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_MODEL_FAST: ${{ vars.LLM_MODEL_FAST }}
+      LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
+      JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
+      ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+      ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      NOTION_APPLICATIONS_DB: ${{ vars.NOTION_APPLICATIONS_DB }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+      OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+      TWILIO_FROM: ${{ secrets.TWILIO_FROM }}
+      OWNER_PHONE: ${{ secrets.OWNER_PHONE }}
+      DRY_RUN: ${{ vars.DRY_RUN || 'true' }}
+      SUBMIT_ENABLED: ${{ vars.SUBMIT_ENABLED || 'false' }}
+      EMAIL_ENABLED: ${{ vars.EMAIL_ENABLED || 'false' }}
+    steps:
+      - name: Pick stage
+        id: stage
+        run: |
+          case "${{ github.event.schedule }}" in
+            "*/30 1-17 * * *") s=inbox ;;
+            "15 */3 * * *")    s=discover ;;
+            "45 2-16/2 * * *") s=submit ;;
+            "5 4-13 * * *")    s=outreach ;;
+            "30 13 * * 0")     s=digest ;;
+            *)                 s="${{ github.event.inputs.stage }}" ;;
+          esac
+          echo "name=$s" >> "$GITHUB_OUTPUT"
+          echo "Stage: $s"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e .
+      - name: Install Chromium (form filling + resume PDFs)
+        if: steps.stage.outputs.name == 'submit'
+        run: python -m playwright install --with-deps chromium
+      - name: Run ${{ steps.stage.outputs.name }}
+        env:
+          JOB_URL: ${{ github.event.inputs.url }}
+        run: |
+          if [ "${{ steps.stage.outputs.name }}" = "ingest" ]; then
+            python -m jobsearch ingest "$JOB_URL"
+          else
+            python -m jobsearch "${{ steps.stage.outputs.name }}"
+          fi
+      - name: Sync Notion
+        if: always() && steps.stage.outputs.name != 'notion' && steps.stage.outputs.name != 'digest'
+        continue-on-error: true
+        run: python -m jobsearch notion
