@@ -18,15 +18,17 @@ def safe_name(*parts: str) -> str:
     return "_".join(re.sub(r"[^A-Za-z0-9]+", "-", p).strip("-") for p in parts if p)[:120] + ".pdf"
 
 
-def render_pdf(content: dict, header: dict, out_path: Path) -> Path:
-    from playwright.sync_api import sync_playwright
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    html = render_html(content, header)
+def _render(html: str, out_path: Path) -> None:
     import os
 
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(executable_path=os.getenv("CHROMIUM_EXECUTABLE") or None)
+        exe = os.getenv("CHROMIUM_EXECUTABLE") or None
+        try:
+            browser = p.chromium.launch(executable_path=exe)
+        except Exception:  # bundled Chromium not installed (e.g. on the laptop): use installed Google Chrome
+            browser = p.chromium.launch(channel="chrome")
         page = browser.new_page()
         page.set_content(html, wait_until="load")
         page.pdf(path=str(out_path), format="A4", print_background=True, prefer_css_page_size=True)
@@ -36,4 +38,15 @@ def render_pdf(content: dict, header: dict, out_path: Path) -> Path:
             page.add_style_tag(content="body{font-size:8.9pt;line-height:1.25} ul{margin-bottom:2pt}")
             page.pdf(path=str(out_path), format="A4", print_background=True, prefer_css_page_size=True)
         browser.close()
+
+
+def render_pdf(content: dict, header: dict, out_path: Path) -> Path:
+    """Render in a worker thread: callers (the laptop helper) may already be inside a Playwright
+    sync session, and Playwright's sync API refuses to nest within the same thread."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    html = render_html(content, header)
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        ex.submit(_render, html, out_path).result()
     return out_path
