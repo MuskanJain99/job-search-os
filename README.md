@@ -17,7 +17,7 @@ for the sites that need a signed-in browser.
                 │ LinkedIn (Easy Apply + external Apply), Naukri, Instahyre,  │────────┘
                 │ Indeed, Workday & company portals (auto account creation)    │
                 └──────────────────────────────────────────────────────────────┘
-          any step that needs a human → alert (email + push + SMS) → wait 2 min → continue or move on
+          any step that needs a human (CAPTCHA, code, sign-in) → skip the job and move on; unanswerable form questions → one email at the end of the run
 ```
 
 ## What makes it trustworthy
@@ -28,9 +28,10 @@ for the sites that need a signed-in browser.
   (`jobsearch/tailor.py`, tested in `tests/test_truthfulness.py`.)
 - **Form answers come from an approved answer sheet** (`profile_answers`). `ASK_ME` / `NEVER_ANSWER_AUTOMATICALLY`
   fields and unknown required questions are never guessed — the owner is asked.
-- **Human-in-the-loop with a timeout.** CAPTCHAs, verification codes, sign-ins, unknown questions: alert →
-  wait (`HUMAN_WAIT_SECONDS`, default 120 s) → continue if handled, otherwise record and move on. Late email
-  replies are picked up by the inbox stage and re-queue the job. Anti-bot checks are never bypassed.
+- **No live human steps.** CAPTCHAs, verification codes, sign-in walls and unknown layouts: the job is skipped and the
+  run continues (anti-bot checks are never bypassed). Form questions the answer sheet can't cover are collected and sent in
+  ONE email at the end of the run (`[Job Search] QUESTIONS #…`); reply once and the answers are saved for all future
+  applications and the waiting jobs are retried. The laptop helper runs headless (`LAPTOP_HEADLESS=false` to watch it).
 - **Safe public logs.** Logs contain counts and IDs only; a redaction filter strips emails, phones and keys.
 - **Everything outbound is off by default** (`DRY_RUN=true`, `SUBMIT_ENABLED=false`, `EMAIL_ENABLED=false`).
 

@@ -139,5 +139,4 @@ def daily_needs_input(r: db.Run) -> None:
            where b.resolved_at is null and b.created_at > now() - interval '24 hours'
              and b.type in ('ASK_ME','NEVER_ANSWER') and coalesce(f.score,0) >= 80""").fetchall()
     if rows:
-        alerts.alert(r, "needs_input", datetime.now().strftime("%Y-%m-%d"),
-                     f"{len(rows)} question(s) need your answer for strong-fit jobs — see the latest email or ask Claude 'show blockers'.")
+        pass  # questions go out in the end-of-run digest email, not as an interruption

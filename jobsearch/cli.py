@@ -10,6 +10,17 @@ from .log import get_logger
 log = get_logger("cli")
 
 
+def _question_digest() -> None:
+    """End of run: ONE email with every question that blocked a job (best effort)."""
+    try:
+        from . import db, human
+
+        with db.run("question_digest") as r:
+            r.summary["questions"] = human.send_question_digest(r)
+    except Exception as exc:  # never fail the stage because the email failed
+        log.warning("question digest failed: %s", type(exc).__name__)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="jobsearch", description="Automated, evidence-grounded job search pipeline")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -76,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
             digest = resume_pdf.store_default(r.conn, args.path)
             r.audit("resume.set_default", "resume_files", "default", sha256=digest[:16])
         print("Default resume saved. Every application will attach this file.")
+    if args.cmd in ("discover", "submit") or (args.cmd == "laptop" and args.mode in ("auto", "assist")):
+        _question_digest()
     return 0
 
 

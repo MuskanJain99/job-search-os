@@ -105,7 +105,7 @@ def auto() -> None:
             return
         header, profile, evidence = db.contact_header(conn), db.profile_answers(conn), db.resume_evidence(conn)
         with sync_playwright() as pw, tempfile.TemporaryDirectory() as tmp:
-            ctx = _browser(pw, headless=False)
+            ctx = _browser(pw, headless=settings.laptop_headless)
             page = ctx.new_page()
             checked: dict[str, bool] = {}
             for app in queue:
@@ -179,7 +179,7 @@ def apply_flow(r: db.Run, page, app: dict, header, profile, evidence, tmp: Path)
                     try_fill(page, by_id[fid], value, pdf, None)
                     _pause(0.5, 1.5)
         if not _click_next(page):
-            # Unknown layout: hand the open window to her for 2 minutes, then continue from wherever she leaves it.
+            # Unknown layout: skip this job and move on.
             if not wait_for_human(r, page, app_id, f"{app['company']} — {app['title']}", what="stuck"):
                 return False
             continue
@@ -239,49 +239,57 @@ def _code_prompt(page) -> bool:
         "input[autocomplete='one-time-code'], input[name*='code' i], input[id*='code' i], input[maxlength='1']").count() > 0
 
 
-def wait_for_human(r: db.Run, page, app_id: str, label: str, what: str = "captcha") -> bool:
-    """CAPTCHA hand-off: alert by email + push (+ SMS if configured), keep the page open and in front for
-    CAPTCHA_WAIT_SECONDS (default 2 min). Returns True if it was solved; otherwise closes the tab, keeps the
-    application queued for `jobsearch laptop assist`, and the caller moves on to the next job."""
-    from .submit import _captcha
+MISSING_LABELS_JS = r"""
+() => [...document.querySelectorAll('input[required], textarea[required], select[required], [aria-required="true"]')]
+  .filter(el => {
+    if (el.type === 'hidden' || el.getAttribute('aria-hidden') === 'true') return false;
+    const s = getComputedStyle(el); const r = el.getBoundingClientRect();
+    if (el.type !== 'file' && (s.display === 'none' || s.visibility === 'hidden' || r.width === 0)) return false;
+    if (el.type === 'radio' || el.type === 'checkbox')
+      return el.name ? !document.querySelector(`input[name="${CSS.escape(el.name)}"]:checked`) : !el.checked;
+    return !(el.value || '').trim();
+  })
+  .map(el => {
+    const l = el.labels && el.labels[0] ? el.labels[0].innerText : '';
+    return (el.getAttribute('aria-label') || l || el.placeholder || el.name || '').replace(/[*:]/g, '').trim();
+  })
+  .filter(t => t);
+"""
 
+_SKIP_REASON = {
+    "captcha": ("CAPTCHA", "CAPTCHA on the page"),
+    "code": ("MFA", "verification code required"),
+    "login": ("LOGIN", "sign-in required"),
+    "stuck": ("OTHER", "unknown page layout"),
+}
+
+
+def wait_for_human(r: db.Run, page, app_id: str, label: str, what: str = "captcha") -> bool:
+    """Fully automated: there is no human step. A CAPTCHA, code, sign-in wall or unknown layout means this job
+    is skipped and the run moves on. Empty required fields are different: their labels become questions that go
+    out in the end-of-run email, and the application waits (BLOCKED) until she answers for future use.
+    Always returns False so every caller moves on."""
+    r.bump(f"skipped_{what}")
+    url = ""
     try:
-        page.bring_to_front()
-    except Exception:
-        pass
-    msgs = {
-        "captcha": f"CAPTCHA on your Mac: {label[:90]}. Solve it in the open Chrome window within 2 min — it continues by itself.",
-        "code": f"Code needed on your Mac: {label[:80]}. Type the code (email/SMS) into the open Chrome window within 2 min.",
-        "login": f"Sign-in needed on your Mac: {label[:80]}. Sign in in the open Chrome window within 2 min.",
-        "stuck": f"Help needed on your Mac: {label[:80]}. Click to the next step in the open Chrome window within 2 min.",
-        "fields": f"Answers needed on your Mac: {label[:80]}. Fill the empty required fields in the open Chrome window within 2 min.",
-    }
-    alerts.alert(r, "captcha", f"{app_id}:{int(time.time() // 60)}", msgs.get(what, msgs["stuck"]), live=True)
-    start_state = _state(page)
-    blocked = {"captcha": _captcha, "code": _code_prompt,
-               "login": lambda p: p.locator("input[type=password]").count() > 0,
-               "stuck": lambda p: _state(p) == start_state,
-               "fields": _missing_required}.get(what, _captcha)
-    deadline = time.time() + settings.captcha_wait_s
-    while time.time() < deadline:
-        time.sleep(3)
+        url = page.url
+        if what == "fields":
+            labels = [t for t in dict.fromkeys(page.evaluate(MISSING_LABELS_JS)) if t][:12]
+            for q in labels:
+                db.open_blocker(r, app_id, "ASK_ME", f"Required field the form needs — {label[:80]}", q)
+            if not labels:
+                db.open_blocker(r, app_id, "OTHER", "required fields empty, labels unreadable", url)
+                db.set_application_status(r, app_id, "SKIPPED", skip_reason="required fields could not be filled", next_action=None)
+        else:
+            typ, why = _SKIP_REASON.get(what, _SKIP_REASON["stuck"])
+            db.open_blocker(r, app_id, typ, f"Skipped automatically — {why}", url)
+            db.set_application_status(r, app_id, "SKIPPED", skip_reason=why, next_action=None)
+    finally:
         try:
-            if page.is_closed():
-                break
-            if not blocked(page):
-                r.bump("captcha_solved_by_owner")
-                r.audit("captcha.solved", "applications", app_id)
-                _pause(1, 2)
-                return True
+            if not page.is_closed():
+                page.close()
         except Exception:
-            break
-    r.bump("captcha_timeout")
-    db.open_blocker(r, app_id, "CAPTCHA", "CAPTCHA not solved within 2 minutes — run `jobsearch laptop assist` later", page.url)
-    try:
-        if not page.is_closed():
-            page.close()
-    except Exception:
-        pass
+            pass
     return False
 
 
@@ -375,7 +383,7 @@ def assist() -> None:
                 if _captcha(page) and not wait_for_human(r, page, app_id, label, what="captcha"):
                     continue
                 if _missing_required(page):
-                    print(f"\n→ {label}: some required fields are empty — fill them in the Chrome window (2 min)…")
+                    print(f"\n→ {label}: some required fields are empty — queued as questions for the end-of-run email.")
                     if not wait_for_human(r, page, app_id, label, what="fields"):
                         continue
                 if not (settings.can_write_external() and settings.submit_enabled):
