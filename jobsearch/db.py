@@ -23,10 +23,36 @@ log = get_logger("db")
 ACTOR = "ACTION"  # audit_log.actor value for this service (allowed: CLAUDE, ACTION, USER)
 
 
+def normalize_url(url: str) -> str:
+    """Tolerate raw special characters (@ : / ? # %) in the DB password by percent-encoding it.
+
+    The password is everything between the first ':' after the user and the LAST '@' before the host.
+    Already-encoded passwords are left alone.
+    """
+    from urllib.parse import quote, unquote
+
+    url = url.strip().strip("\"'")
+    for scheme in ("postgresql://", "postgres://"):
+        if url.startswith(scheme):
+            rest = url[len(scheme):]
+            break
+    else:
+        return url
+    tail_start = rest.find("/", rest.rfind("@") + 1)
+    auth_host, tail = (rest, "") if tail_start < 0 else (rest[:tail_start], rest[tail_start:])
+    if "@" not in auth_host:
+        return url
+    userinfo, host = auth_host.rsplit("@", 1)
+    user, _, password = userinfo.partition(":")
+    if password and unquote(password) == password:
+        password = quote(password, safe="")
+    return f"{scheme}{user}:{password}@{host}{tail}" if password else f"{scheme}{user}@{host}{tail}"
+
+
 def connect() -> psycopg.Connection:
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not set")
-    return psycopg.connect(settings.database_url, row_factory=dict_row, autocommit=True, prepare_threshold=None)
+    return psycopg.connect(normalize_url(settings.database_url), row_factory=dict_row, autocommit=True, prepare_threshold=None)
 
 
 @dataclass
