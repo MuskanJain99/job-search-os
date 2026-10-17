@@ -63,6 +63,23 @@ def _company(conn, name: str, p: Posting) -> str:
     return str(row["id"])
 
 
+MAX_PER_COMPANY_PER_RUN = 3
+
+
+def spread_by_company(postings: list[Posting]) -> list[Posting]:
+    """Round-robin across companies so one employer with many openings can't use the whole daily cap."""
+    groups: dict[str, list[Posting]] = {}
+    for p in postings:
+        groups.setdefault(targeting.normalize(p.company_name or p.token or ""), []).append(p)
+    out: list[Posting] = []
+    while groups:
+        for k in list(groups):
+            out.append(groups[k].pop(0))
+            if not groups[k]:
+                del groups[k]
+    return out
+
+
 def run() -> None:
     with db.run("discover_prepare") as r:
         conn = r.conn
@@ -77,10 +94,14 @@ def run() -> None:
         profile = db.profile_answers(conn)
         sch12 = next((p["answer"] for p in profile if p["id"] == "SCH-12"), "")
 
-        postings = collect(conn, cfg)
+        postings = spread_by_company(collect(conn, cfg))
         r.summary["collected"] = len(postings)
         seen: set[str] = set()
+        per_company: dict[str, int] = {}
         for p in postings:
+            if per_company.get(targeting.normalize(p.company_name or p.token or ""), 0) >= MAX_PER_COMPANY_PER_RUN:
+                r.bump("skip_company_cap")
+                continue
             if budget <= 0:
                 r.partial("daily new-job cap reached")
                 break
@@ -100,6 +121,7 @@ def run() -> None:
                 r.bump("skip_seen")
                 continue
             seen.add(key)
+            per_company[targeting.normalize(company)] = per_company.get(targeting.normalize(company), 0) + 1
             if len(p.description) < 400:
                 text = search.fetch_page_text(p.url)
                 if len(text) > len(p.description):
