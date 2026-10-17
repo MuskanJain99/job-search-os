@@ -53,6 +53,8 @@ _RULES: list[tuple[str, str]] = [  # (regex on lowercased label, profile id)
 # Yes/No questions with a standing answer (any input type: radio, select, checkbox, combobox).
 _YES_NO_RULES: list[tuple[str, str]] = [
     (r"experience (in|with) backend|backend (development )?experience", "EXP-12"),
+    (r"^(?!.*(assistance|package|support|bonus|expense|where|which|preferred|when)).*"
+     r"((willing|open|able|prepared|ready|consider|happy).{0,40}relocat|relocat\w*\s*\?|^relocation$)", "REL-01"),
     (r"(consent|agree|allow).{0,80}(shar|transfer|disclos).{0,120}recruit|(shar|transfer).{0,60}application.{0,120}recruit", "CNS-06"),
 ]
 # Generic total-experience questions offered as ranges ("Years of experience: 0-2 / 2-4 / 4-6 / 6+").

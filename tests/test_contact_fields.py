@@ -54,3 +54,13 @@ def test_standing_yes_answers_and_years_marker():
     assert out["a"][0] == "Yes" and out["b"][0] == "Yes"
     assert out["c"][0] == "__YEARS__:4.3"
     assert "d" not in out  # skill-specific years go to the model (and to ASK_ME if not on the resume)
+
+
+def test_relocation_always_yes():
+    prof = PROFILE + [{"id": "REL-01", "answer_type": "VALUE", "answer": "Yes", "field": "Willing to relocate?"}]
+    yes = ["Are you willing to relocate?", "Willing to relocate to London?", "Are you open to relocating to this location?", "Relocation"]
+    no = ["Do you require relocation assistance?", "Which cities would you relocate to?", "Preferred relocation location"]
+    fields = [{"field_id": q, "label": q, "type": "radio", "options": ["Yes", "No"], "refs": ["x", "y"]} for q in yes + no]
+    out = deterministic(fields, prof)
+    assert all(out[q][0] == "Yes" for q in yes)
+    assert not any(q in out for q in no)
