@@ -64,7 +64,15 @@ _SKILL_SPECIFIC = re.compile(r"experience (in|with|using|of) |\b(in|with) (\w+ )
 YEARS_MARKER = "__YEARS__:"
 
 
-def deterministic(fields: list[dict], profile: list[dict]) -> dict[str, tuple[str, str]]:
+_RELOC_ASSIST = re.compile(r"relocat\w*.{0,40}(assistance|support|package|help|expenses?)|(assistance|support|package|help).{0,40}relocat")
+
+
+def relocation_assistance(job_location: str) -> str:
+    """REL-07: she always needs relocation assistance unless the job is in Hyderabad."""
+    return "No" if "hyderabad" in (job_location or "").lower() else "Yes"
+
+
+def deterministic(fields: list[dict], profile: list[dict], job_location: str = "") -> dict[str, tuple[str, str]]:
     """field_id -> (value, profile_id) for fields with one obvious answer in the approved profile.
     Only VALUE entries (and the EXP-13 years rule) are used; anything else goes to the model."""
     by_id = {p["id"]: p for p in profile if p["answer_type"] == "VALUE" and p.get("answer")}
@@ -75,6 +83,9 @@ def deterministic(fields: list[dict], profile: list[dict]) -> dict[str, tuple[st
         if t in ("file", "textarea"):
             continue
         label = re.sub(r"[*:]", "", f.get("label", "")).strip().lower()
+        if _RELOC_ASSIST.search(label) and any(p["id"] == "REL-07" for p in profile):
+            out[f["field_id"]] = (relocation_assistance(job_location), "REL-07")
+            continue
         hit = next((pid for pat, pid in _YES_NO_RULES if re.search(pat, label) and pid in by_id), None)
         if hit:
             out[f["field_id"]] = (str(by_id[hit]["answer"]).strip(), hit)
@@ -102,7 +113,7 @@ class Resolved:
 
 
 def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_title: str, company: str,
-            user_answers: dict[str, str] | None = None) -> Resolved:
+            user_answers: dict[str, str] | None = None, job_location: str = "") -> Resolved:
     """user_answers: {question label: answer} that Muskan gave directly (email reply) — used verbatim."""
     user_answers = {k.strip().lower(): v for k, v in (user_answers or {}).items()}
     if user_answers and all(f.get("label", "").strip().lower() in user_answers or not f.get("required") for f in fields) \
@@ -115,12 +126,13 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
     prof = "\n".join(f"{p['id']} [{p['answer_type']}] {p['field']}: {p['answer']}"
                      + (f" (when: {p['applies_when']})" if p.get("applies_when") else "") for p in profile)
     ev = "\n".join(f"{e['claim_id']}: {e['claim']}" for e in evidence[:60])
-    payload = (f"<profile>\n{prof}\n</profile>\n<evidence>\n{ev}\n</evidence>\nJob: {job_title} at {company}\n"
+    payload = (f"<profile>\n{prof}\n</profile>\n<evidence>\n{ev}\n</evidence>\nJob: {job_title} at {company}"
+               f" (location: {job_location or 'unknown'})\n"
                + untrusted(json.dumps(fields, ensure_ascii=False), 15000))
     out = ask_json(TASK.format(today=date.today().isoformat()), payload, FormAnswers, fast=True, max_tokens=6000)
 
     proposed = {a.field_id: a for a in out.answers}
-    det = deterministic(fields, profile)
+    det = deterministic(fields, profile, job_location)
     values: dict[str, str] = {}
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []

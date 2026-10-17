@@ -17,8 +17,13 @@ log = get_logger("discover")
 
 TITLE_QUERIES = ["Software Engineer", "Backend Engineer", "AI Engineer", "SDE II", "Senior Software Engineer",
                  "Platform Engineer", "Machine Learning Engineer", "Full Stack Engineer"]
-REGIONS = {"India": ["Bengaluru", "Hyderabad", "India"], "Singapore": ["Singapore"], "UAE": ["Dubai"],
-           "UK": ["London"], "US": ["United States"]}
+# Searched in Muskan's priority order. Places outside this list are not searched for.
+SEARCH_PLACES = [  # (place, JSearch country, Adzuna country)
+    ("Hyderabad", "in", "in"), ("Bengaluru", "in", "in"), ("Gurugram", "in", "in"), ("Pune", "in", "in"),
+    ("India", "in", "in"), ("Dubai", "ae", None), ("Singapore", "sg", "sg"), ("London", "gb", "gb"),
+    ("Berlin", "de", "de"), ("Amsterdam", "nl", "nl"), ("Dublin", "ie", None),
+]
+QUERIES_PER_RUN = int(os.environ.get("AGGREGATOR_QUERIES_PER_RUN", "12"))
 
 
 def collect(conn, cfg) -> list[Posting]:
@@ -34,14 +39,15 @@ def collect(conn, cfg) -> list[Posting]:
         out.extend(posts)
         conn.execute("update companies set last_polled_at=now() where id=%s", (c["id"],))
     # 2) Aggregators covering LinkedIn / Indeed / Glassdoor / Naukri listings
-    for region, places in REGIONS.items():
-        cc = aggregators.JSEARCH_COUNTRIES.get(region)
-        for t in TITLE_QUERIES[:5]:
-            if cc:
-                out.extend(aggregators.jsearch(f"{t} in {places[0]}", cc))
-            ac = aggregators.ADZUNA_COUNTRIES.get(region)
-            if ac:
-                out.extend(aggregators.adzuna(t, ac, where=places[0] if region == "India" else ""))
+    # Free API quotas are small, so each run takes the next slice of (place x title) queries, rotating
+    # through all of them over the day; higher-priority places come first in every rotation.
+    combos = [(pl, cc, ac, t) for t in TITLE_QUERIES[:5] for (pl, cc, ac) in SEARCH_PLACES]
+    combos.sort(key=lambda c: [p[0] for p in SEARCH_PLACES].index(c[0]))
+    start = (int(time.time() // 3600) * QUERIES_PER_RUN) % max(1, len(combos))
+    for pl, cc, ac, t in (combos + combos)[start:start + QUERIES_PER_RUN]:
+        out.extend(aggregators.jsearch(f"{t} in {pl}", cc))
+        if ac:
+            out.extend(aggregators.adzuna(t, ac, where=pl if pl not in ("India", "Singapore") else ""))
     # 3) Web search restricted to public ATS boards
     for q in search.build_queries(TITLE_QUERIES[:4], cfg["target_locations"])[:12]:
         for url in search.search_urls(q, limit=10):
@@ -83,6 +89,20 @@ def spread_by_company(postings: list[Posting]) -> list[Posting]:
     return out
 
 
+def _rank(p: Posting) -> int:
+    loc = targeting.classify_location(p.location, p.remote, "")
+    return targeting.location_rank(p.location, loc.country, remote_india=loc.india_eligible and loc.country != "India")
+
+
+def by_location_priority(postings: list[Posting]) -> list[Posting]:
+    """Hyderabad first, then Bengaluru, Gurugram, Pune, rest of India, Dubai, Singapore, London, Europe, others;
+    within each tier, round-robin across companies."""
+    tiers: dict[int, list[Posting]] = {}
+    for p in postings:
+        tiers.setdefault(_rank(p), []).append(p)
+    return [p for rank in sorted(tiers) for p in spread_by_company(tiers[rank])]
+
+
 def run() -> None:
     with db.run("discover_prepare") as r:
         conn = r.conn
@@ -97,7 +117,7 @@ def run() -> None:
         profile = db.profile_answers(conn)
         sch12 = next((p["answer"] for p in profile if p["id"] == "SCH-12"), "")
 
-        postings = spread_by_company(collect(conn, cfg))
+        postings = by_location_priority(collect(conn, cfg))
         r.summary["collected"] = len(postings)
         seen: set[str] = set()
         per_company: dict[str, int] = {}
@@ -182,7 +202,7 @@ def process(r: db.Run, p: Posting, company: str, loc, cfg, evidence, skeleton, p
 def prepare(r: db.Run, job_id: str, p: Posting, company: str, score: int, evidence, skeleton, profile) -> str:
     conn = r.conn
     channel = aggregators.apply_channel(p.apply_url or p.url)
-    priority = 1 if score >= 80 else 2 if score >= 70 else 3 if score >= 55 else 4
+    priority = _rank(p)  # location priority decides the apply order (fit score only breaks ties)
     app = conn.execute(
         """insert into applications (job_id, status, priority, discovered_via, channel, next_action)
            values (%s,'PREPARING',%s,%s,%s,null) on conflict (job_id) do nothing returning id""",

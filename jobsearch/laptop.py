@@ -333,7 +333,7 @@ def assist() -> None:
     with db.run("laptop_assist") as r:
         conn = r.conn
         rows = conn.execute(
-            """select distinct on (a.id) a.id, a.channel, a.resume_version_id, j.url, j.title, c.name as company, b.id as blocker_id, b.type
+            """select distinct on (a.id) a.id, a.channel, a.resume_version_id, j.url, j.title, j.location, c.name as company, b.id as blocker_id, b.type
                from blockers b join applications a on a.id=b.application_id join jobs j on j.id=a.job_id
                left join companies c on c.id=j.company_id
                where b.resolved_at is null and b.type in ('CAPTCHA','MFA','ACCOUNT_CREATION','LOGIN','OTHER')
@@ -359,7 +359,8 @@ def assist() -> None:
                 _pause(2, 3)
                 fields = page.evaluate(FIELDS_JS)
                 if fields:
-                    res = answers_mod.resolve(fields, profile, evidence, row["title"], row["company"] or "")
+                    res = answers_mod.resolve(fields, profile, evidence, row["title"], row["company"] or "",
+                                             job_location=row.get("location") or "")
                     by_id = {f["field_id"]: f for f in fields}
                     skipped = 0
                     for fid, value in res.values.items():

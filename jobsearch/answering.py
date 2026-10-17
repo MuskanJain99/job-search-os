@@ -16,13 +16,15 @@ def resolve_with_owner(r: db.Run, app_id: str, fields: list[dict], profile, evid
                        ) -> answers_mod.Resolved | None:
     """None means: stopped (blockers recorded or job skipped by her) — move on to the next application."""
     known = stored_user_answers(r.conn, app_id)
-    res = answers_mod.resolve(fields, profile, evidence, title, company, user_answers=known)
+    row = r.conn.execute("select j.location from applications a join jobs j on j.id=a.job_id where a.id=%s", (app_id,)).fetchone()
+    where = (row or {}).get("location") or ""
+    res = answers_mod.resolve(fields, profile, evidence, title, company, user_answers=known, job_location=where)
     if not res.blockers:
         return res
     got = human.ask(r, app_id, company, title, res.blockers)
     if not got or len(got) < len(res.blockers):
         return None
-    res = answers_mod.resolve(fields, profile, evidence, title, company, user_answers={**known, **got})
+    res = answers_mod.resolve(fields, profile, evidence, title, company, user_answers={**known, **got}, job_location=where)
     if res.blockers:  # still something open (shouldn't happen) — record and move on
         for t, q in res.blockers:
             db.open_blocker(r, app_id, t, f"Still unanswered — {company}", q)

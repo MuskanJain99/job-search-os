@@ -64,3 +64,11 @@ def test_relocation_always_yes():
     out = deterministic(fields, prof)
     assert all(out[q][0] == "Yes" for q in yes)
     assert not any(q in out for q in no)
+
+
+def test_relocation_assistance_depends_on_city():
+    prof = PROFILE + [{"id": "REL-07", "answer_type": "RULE", "answer": "Yes unless Hyderabad", "field": "Relocation assistance"}]
+    f = [{"field_id": "r", "label": "Do you require relocation assistance?", "type": "radio", "options": ["Yes", "No"], "refs": ["a", "b"]}]
+    assert deterministic(f, prof, "Hyderabad, Telangana")["r"][0] == "No"
+    assert deterministic(f, prof, "Bengaluru, India")["r"][0] == "Yes"
+    assert deterministic(f, prof, "London")["r"][0] == "Yes"

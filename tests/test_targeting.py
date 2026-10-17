@@ -27,7 +27,16 @@ def test_locations():
     assert not us_remote.eligible
     london = t.classify_location("London, United Kingdom", False)
     assert london.country == "UK" and london.eligible and not london.india_eligible
-    assert not t.classify_location("Berlin, Germany", False).eligible
+    berlin = t.classify_location("Berlin, Germany", False)
+    assert berlin.country == "Europe" and berlin.eligible
+
+
+def test_location_priority():
+    order = ["Hyderabad, Telangana, India", "Bangalore, India", "Gurgaon, Haryana", "Pune, India", "Chennai, India",
+             "Dubai, UAE", "Singapore", "London, UK", "Amsterdam, Netherlands", "Austin, Texas"]
+    ranks = [t.location_rank(x, t.classify_location(x, False).country) for x in order]
+    assert ranks == sorted(ranks) and ranks[0] == 1 and ranks[-1] == 10
+    assert t.classify_location("Austin, Texas", False).eligible  # not searched, but applied to if it turns up
 
 
 def test_decide_all_eligible_ignores_fit():

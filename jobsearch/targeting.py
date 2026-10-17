@@ -23,6 +23,34 @@ COUNTRY_TERMS = {
     "US": ["united states", "usa", "u.s.", "us-", "new york", "san francisco", "seattle", "austin", "boston",
            "california", "texas", "washington", "chicago", "remote - us", "remote, us"],
 }
+COUNTRY_TERMS["Europe"] = [
+    "europe", "germany", "berlin", "munich", "hamburg", "frankfurt", "netherlands", "amsterdam", "rotterdam",
+    "ireland", "dublin", "france", "paris", "spain", "madrid", "barcelona", "portugal", "lisbon", "poland",
+    "warsaw", "krakow", "sweden", "stockholm", "switzerland", "zurich", "geneva", "denmark", "copenhagen",
+    "belgium", "brussels", "austria", "vienna", "finland", "helsinki", "norway", "oslo", "czech", "prague",
+    "estonia", "tallinn", "italy", "milan", "luxembourg", "romania", "bucharest", "greece", "athens"]
+
+# Muskan's location priority (1 = apply first). Anything else is not searched for, but if it turns up
+# it is still applied to (relocation: always yes) at the lowest priority.
+_CITY_RANK = [("hyderabad", 1), ("bengaluru", 2), ("bangalore", 2), ("gurugram", 3), ("gurgaon", 3), ("pune", 4)]
+COUNTRY_RANK = {"India": 5, "UAE": 6, "Singapore": 7, "UK": 8, "Europe": 9}
+OTHER_RANK = 10
+
+
+def location_rank(location: str, country: str | None, remote_india: bool = False) -> int:
+    loc = (location or "").lower()
+    for city, rank in _CITY_RANK:
+        if city in loc:
+            return rank
+    if country == "UK" and "london" not in loc:
+        return COUNTRY_RANK["Europe"]
+    if country == "UAE" and "dubai" not in loc:
+        return COUNTRY_RANK["UAE"]
+    if country in COUNTRY_RANK:
+        return COUNTRY_RANK[country]
+    return COUNTRY_RANK["India"] if remote_india else OTHER_RANK
+
+
 GLOBAL_REMOTE = ["anywhere", "worldwide", "global", "apac", "asia", "emea & apac", "remote - india", "remote, india"]
 
 
@@ -79,8 +107,10 @@ def classify_location(location: str, remote: bool | None, description: str = "")
     if is_remote and countries:
         # Remote but tied to another country: needs local work authorisation; not India-eligible.
         return Location(country, "REMOTE", False, False)
-    if country in {"Singapore", "UAE", "UK", "US"}:
-        return Location(country, policy, False, True)  # relocation targets; sponsorship checked in scoring
+    if countries or loc:
+        # Relocation targets (UAE, Singapore, UK, Europe) and anywhere else that turns up: she always says yes
+        # to relocation. Priority is handled by location_rank; sponsorship is checked in scoring.
+        return Location(country, policy, False, True)
     return Location(country, policy, False, False)
 
 
