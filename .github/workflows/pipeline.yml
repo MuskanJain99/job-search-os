@@ -26,7 +26,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     concurrency:
       group: pipeline-${{ github.event.inputs.stage || github.event.schedule }}
       cancel-in-progress: false

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+
 from psycopg.types.json import Jsonb
 
 from . import answering, db, scoring, tailor, targeting
@@ -98,7 +101,11 @@ def run() -> None:
         r.summary["collected"] = len(postings)
         seen: set[str] = set()
         per_company: dict[str, int] = {}
+        deadline = time.monotonic() + float(os.environ.get("DISCOVER_TIME_BUDGET_S", "2100"))
         for p in postings:
+            if time.monotonic() > deadline:
+                r.partial("time budget reached; remaining jobs picked up next run")
+                break
             if per_company.get(targeting.normalize(p.company_name or p.token or ""), 0) >= MAX_PER_COMPANY_PER_RUN:
                 r.bump("skip_company_cap")
                 continue
