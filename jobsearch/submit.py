@@ -14,7 +14,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from . import answering, db, resume_pdf
+from . import answering, db, ranges, resume_pdf
 from .config import settings
 from .log import get_logger
 from .sources.aggregators import CLOUD_SUBMIT
@@ -204,27 +204,94 @@ def fill(page, f: dict, value: str, pdf: Path, cover: str | None) -> None:
             p.write_text(cover)
             loc.set_input_files(str(p))
         return
+    years = _years(value)
     if t == "select":
+        opts = loc.evaluate("el => [...el.options].map(o => o.text.trim())")
+        if years is not None and ranges.looks_like_ranges(opts):
+            i = ranges.pick(opts, years)
+            if i is None:
+                raise ValueError("no range contains the years")
+            loc.select_option(index=i)
+            return
         _select_fuzzy(loc, value)
         return
     if t in ("radio", "checkbox"):
-        for ref, label in zip(refs, f.get("options") or [], strict=False):
-            if label.strip().lower() == value.strip().lower() or (t == "checkbox" and value.lower() in ("yes", "true")):
-                page.locator(f"[data-jb='{ref}']").check(force=True)
-                break
+        opts = f.get("options") or []
+        idx = None
+        if years is not None and ranges.looks_like_ranges(opts):
+            idx = ranges.pick(opts, years)
+        else:
+            want = value.strip().lower()
+            idx = next((i for i, o in enumerate(opts) if o.strip().lower() == want), None)
+            if idx is None and t == "checkbox" and want in ("yes", "true", "i agree", "agree"):
+                idx = 0
+        if idx is None:
+            raise ValueError("no matching option")
+        page.locator(f"[data-jb='{refs[idx]}']").check(force=True)
         return
     if t == "combobox":
-        loc.click()
-        loc.fill(value)
-        page.wait_for_timeout(700)
-        page.keyboard.press("Enter")
+        _combobox(page, loc, value, years)
         return
-    if re.search(r"country code|dial", f.get("label", ""), re.I) or (value.startswith("+") and value[1:].isdigit()):
+    label = f.get("label", "")
+    if re.search(r"country code|dial", label, re.I) or (value.startswith("+") and value[1:].isdigit()):
         if _pick_phone_country(page, loc, value):
             return
-    if re.search(r"phone|mobile|telephone", f.get("label", ""), re.I):
-        _pick_phone_country(page, loc, "+91")  # numbers in the profile are Indian; no-op if there is no flag widget
+    if re.search(r"phone|mobile|telephone", label, re.I) and _in_intl_widget(loc):
+        # intl-tel-input reformats national numbers (India: "090000 52756"); typing the full
+        # international number keeps it as "+91 90000 52756" and selects India in the flag dropdown.
+        digits = re.sub(r"\D", "", value)
+        loc.fill("")
+        loc.press_sequentially(f"{PHONE_DIAL_CODE}{digits[-10:]}", delay=20)
+        return
     loc.fill(value)
+
+
+PHONE_DIAL_CODE = "+91"  # profile CON-01
+
+
+def _years(value: str) -> float | None:
+    from .answers import YEARS_MARKER
+
+    v = value.strip()
+    if v.startswith(YEARS_MARKER):
+        v = v[len(YEARS_MARKER):]
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def _in_intl_widget(loc) -> bool:
+    try:
+        return loc.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' iti ')][1]").count() > 0
+    except Exception:
+        return False
+
+
+def _combobox(page, loc, value: str, years: float | None) -> None:
+    """React-select style dropdowns: type to filter, then click the best option (not just the first)."""
+    loc.click()
+    page.wait_for_timeout(400)
+    typed = "" if years is not None else value
+    if typed:
+        loc.fill(typed)
+        page.wait_for_timeout(800)
+    options = page.locator("[role=option]")
+    texts = [t.strip() for t in options.all_inner_texts()[:300]]
+    idx = None
+    if years is not None:
+        idx = ranges.pick(texts, years) if ranges.looks_like_ranges(texts) else None
+    else:
+        want = value.strip().lower()
+        idx = next((i for i, t in enumerate(texts) if t.lower() == want), None)
+        if idx is None:  # "India" -> "India +91", not "British Indian Ocean Territory"
+            idx = next((i for i, t in enumerate(texts) if re.match(rf"{re.escape(want)}\b", t.lower())), None)
+        if idx is None:
+            idx = next((i for i, t in enumerate(texts) if want and want in t.lower()), None)
+    if idx is None:
+        page.keyboard.press("Escape")
+        raise ValueError("no matching option")
+    options.nth(idx).click()
 
 
 def _select_fuzzy(loc, value: str) -> None:

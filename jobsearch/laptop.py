@@ -183,6 +183,29 @@ def apply_flow(r: db.Run, page, app: dict, header, profile, evidence, tmp: Path)
     return False
 
 
+MISSING_REQUIRED_JS = r"""
+() => [...document.querySelectorAll('input[required], textarea[required], select[required], [aria-required="true"]')]
+  .filter(el => {
+    if (el.type === 'hidden' || el.getAttribute('aria-hidden') === 'true') return false;
+    const s = getComputedStyle(el); const r = el.getBoundingClientRect();
+    if (el.type !== 'file' && (s.display === 'none' || s.visibility === 'hidden' || r.width === 0)) return false;
+    if (el.type === 'radio' || el.type === 'checkbox')
+      return el.name ? !document.querySelector(`input[name="${CSS.escape(el.name)}"]:checked`) : !el.checked;
+    const ctl = el.closest('.select__control, [class*="select__control"]');
+    if (ctl) return !ctl.querySelector('[class*="single-value"], [class*="multi-value"]');
+    if (el.type === 'file') return !(el.files && el.files.length);
+    return !String(el.value || '').trim();
+  }).length
+"""
+
+
+def _missing_required(page) -> bool:
+    try:
+        return page.evaluate(MISSING_REQUIRED_JS) > 0
+    except Exception:
+        return False
+
+
 def _body(page) -> str:
     try:
         return page.inner_text("body").lower()[:30000]
@@ -224,12 +247,14 @@ def wait_for_human(r: db.Run, page, app_id: str, label: str, what: str = "captch
         "code": f"Code needed on your Mac: {label[:80]}. Type the code (email/SMS) into the open Chrome window within 2 min.",
         "login": f"Sign-in needed on your Mac: {label[:80]}. Sign in in the open Chrome window within 2 min.",
         "stuck": f"Help needed on your Mac: {label[:80]}. Click to the next step in the open Chrome window within 2 min.",
+        "fields": f"Answers needed on your Mac: {label[:80]}. Fill the empty required fields in the open Chrome window within 2 min.",
     }
     alerts.alert(r, "captcha", f"{app_id}:{int(time.time() // 60)}", msgs.get(what, msgs["stuck"]), live=True)
     start_state = _state(page)
     blocked = {"captcha": _captcha, "code": _code_prompt,
                "login": lambda p: p.locator("input[type=password]").count() > 0,
-               "stuck": lambda p: _state(p) == start_state}.get(what, _captcha)
+               "stuck": lambda p: _state(p) == start_state,
+               "fields": _missing_required}.get(what, _captcha)
     deadline = time.time() + settings.captcha_wait_s
     while time.time() < deadline:
         time.sleep(3)
@@ -344,22 +369,38 @@ def assist() -> None:
                     if skipped:
                         print(f"  ({skipped} field(s) couldn't be auto-filled — please fill them yourself)")
                 baseline = _body(page)
-                print(f"\n→ {row['company']} — {row['title']}: finish the {row['type'].lower()} step and click Submit (waiting up to 10 min)…")
-                deadline = time.time() + 600
-                done = False
-                while time.time() < deadline and not page.is_closed():
-                    now = _body(page)
-                    # Only a confirmation phrase that was NOT already on the page when we opened it counts.
-                    if any(t in now and t not in baseline for t in CONFIRM_TEXT):
-                        done = True
-                        break
-                    time.sleep(3)
-                if done:
-                    db.set_application_status(r, str(row["id"]), "SUBMITTED_CONFIRMED", submitted_at=_now(),
-                                              confirmation_url=page.url, confirmation_evidence="confirmation page (assisted)",
-                                              next_action="outreach")
-                    conn.execute("update blockers set resolved_at=now(), resolution='Completed by Muskan (assisted)' where id=%s", (row["blocker_id"],))
-                    r.bump("submitted_assisted")
+                label = f"{row['company']} — {row['title']}"
+                app_id = str(row["id"])
+                # Wait for her ONLY when something actually needs a human; otherwise carry on by itself.
+                if _captcha(page) and not wait_for_human(r, page, app_id, label, what="captcha"):
+                    continue
+                if _missing_required(page):
+                    print(f"\n→ {label}: some required fields are empty — fill them in the Chrome window (2 min)…")
+                    if not wait_for_human(r, page, app_id, label, what="fields"):
+                        continue
+                if not (settings.can_write_external() and settings.submit_enabled):
+                    print(f"\n✓ {label}: filled — dry run, not submitting.")
+                    r.bump("would_submit")
+                    page.wait_for_timeout(3000)
+                    page.close()
+                    continue
+                page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click()
+                page.wait_for_timeout(6000)
+                if _code_prompt(page) and not wait_for_human(r, page, app_id, label, what="code"):
+                    continue
+                if _captcha(page) and not wait_for_human(r, page, app_id, label, what="captcha"):
+                    continue
+                page.wait_for_timeout(3000)
+                now = _body(page)
+                # Only a confirmation phrase that was NOT already on the page when we opened it counts.
+                confirmed = any(t in now and t not in baseline for t in CONFIRM_TEXT)
+                db.set_application_status(r, app_id, "SUBMITTED_CONFIRMED" if confirmed else "SUBMITTED", submitted_at=_now(),
+                                          confirmation_url=page.url,
+                                          confirmation_evidence="confirmation page (laptop)" if confirmed else None,
+                                          next_action="outreach")
+                conn.execute("update blockers set resolved_at=now(), resolution='Submitted from laptop helper' where id=%s", (row["blocker_id"],))
+                r.bump("submitted_confirmed" if confirmed else "submitted_unconfirmed")
+                print(f"\n✓ {label}: submitted{' (confirmed)' if confirmed else ' (no confirmation text seen — check later)'}.")
                 if not page.is_closed():
                     page.close()
             ctx.close()

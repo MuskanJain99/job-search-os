@@ -50,14 +50,41 @@ _RULES: list[tuple[str, str]] = [  # (regex on lowercased label, profile id)
 ]
 
 
+# Yes/No questions with a standing answer (any input type: radio, select, checkbox, combobox).
+_YES_NO_RULES: list[tuple[str, str]] = [
+    (r"experience (in|with) backend|backend (development )?experience", "EXP-12"),
+    (r"(consent|agree|allow).{0,80}(shar|transfer|disclos).{0,120}recruit|(shar|transfer).{0,60}application.{0,120}recruit", "CNS-06"),
+]
+# Generic total-experience questions offered as ranges ("Years of experience: 0-2 / 2-4 / 4-6 / 6+").
+_TOTAL_EXP = re.compile(r"(years|yrs).{0,30}experience|experience.{0,30}(years|yrs|level|range)|how (many|much|long).{0,40}experience|total experience|work experience")
+_SKILL_SPECIFIC = re.compile(r"experience (in|with|using|of) |\b(in|with) (\w+ ){0,3}(development|programming|language)")
+
+YEARS_MARKER = "__YEARS__:"
+
+
 def deterministic(fields: list[dict], profile: list[dict]) -> dict[str, tuple[str, str]]:
-    """field_id -> (value, profile_id) for plain contact fields. Only VALUE entries are used."""
+    """field_id -> (value, profile_id) for fields with one obvious answer in the approved profile.
+    Only VALUE entries (and the EXP-13 years rule) are used; anything else goes to the model."""
     by_id = {p["id"]: p for p in profile if p["answer_type"] == "VALUE" and p.get("answer")}
+    years_rule = next((p for p in profile if p["id"] == "EXP-13" and p.get("answer")), None)
     out: dict[str, tuple[str, str]] = {}
     for f in fields:
-        if f.get("type") in ("file", "radio", "checkbox", "textarea"):
+        t = f.get("type")
+        if t in ("file", "textarea"):
             continue
         label = re.sub(r"[*:]", "", f.get("label", "")).strip().lower()
+        hit = next((pid for pat, pid in _YES_NO_RULES if re.search(pat, label) and pid in by_id), None)
+        if hit:
+            out[f["field_id"]] = (str(by_id[hit]["answer"]).strip(), hit)
+            continue
+        if years_rule and t in ("select", "radio", "combobox") and _TOTAL_EXP.search(label) and not _SKILL_SPECIFIC.search(label):
+            from . import ranges
+
+            if t == "combobox" or ranges.looks_like_ranges(f.get("options") or []):
+                out[f["field_id"]] = (YEARS_MARKER + str(years_rule["answer"]).strip(), "EXP-13")
+                continue
+        if t in ("radio", "checkbox"):
+            continue
         for pattern, pid in _RULES:
             if re.search(pattern, label) and pid in by_id:
                 out[f["field_id"]] = (str(by_id[pid]["answer"]).strip(), pid)
