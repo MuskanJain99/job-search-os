@@ -57,8 +57,9 @@ security clearance, non-English, closed.
 ## Setup
 
 1. **Database** — a Supabase project with the job-search-os schema. Add `DATABASE_URL` (session pooler string).
-2. **LLM** — set repository *variables* `LLM_PROVIDER` (`anthropic` | `openai` | `openai_compatible`), `LLM_MODEL`,
-   optionally `LLM_MODEL_FAST` and `LLM_BASE_URL`; add the matching API key secret.
+2. **LLM** — set repository *variables* `LLM_PROVIDER` (`openai_compatible` | `openai` | `anthropic`), `LLM_MODEL`,
+   optionally `LLM_MODEL_FAST`, `LLM_BASE_URL`; add one secret, `LLM_API_KEY`. The default setup uses Google Gemini's free tier
+   (key from aistudio.google.com/apikey); Groq and OpenRouter free models also work.
 3. **Job sources** (any subset) — `JSEARCH_API_KEY` (RapidAPI), `ADZUNA_APP_ID` + `ADZUNA_APP_KEY`, `FIRECRAWL_API_KEY`.
 4. **Gmail + Calendar** — run `scripts/google_oauth.py` once; add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
    `GOOGLE_REFRESH_TOKEN`, `OWNER_EMAIL`.

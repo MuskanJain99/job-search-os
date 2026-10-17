@@ -1,9 +1,10 @@
 """Provider-agnostic LLM access with JSON output.
 
-LLM_PROVIDER=anthropic          -> Anthropic Messages API (ANTHROPIC_API_KEY)
-LLM_PROVIDER=openai             -> OpenAI Chat Completions (OPENAI_API_KEY)
-LLM_PROVIDER=openai_compatible  -> any OpenAI-compatible endpoint (LLM_BASE_URL + OPENAI_API_KEY),
-                                   e.g. OpenRouter, Groq, Together, a local Ollama server.
+One secret, LLM_API_KEY, is used for whichever provider is selected.
+LLM_PROVIDER=openai_compatible  -> any OpenAI-compatible endpoint (LLM_BASE_URL), e.g. Google Gemini
+                                   (free tier), Groq, OpenRouter, Together, a local Ollama server.
+LLM_PROVIDER=openai             -> OpenAI Chat Completions
+LLM_PROVIDER=anthropic          -> Anthropic Messages API
 Models are configured with LLM_MODEL (quality work: tailoring, writing) and LLM_MODEL_FAST
 (classification, extraction). No model names are hard-coded.
 """
@@ -42,13 +43,26 @@ def _model(fast: bool) -> str:
     return m
 
 
+_last_call = 0.0
+
+
+def _throttle() -> None:
+    """Free tiers cap requests per minute; space calls out when LLM_MIN_INTERVAL_S is set."""
+    global _last_call
+    wait = settings.llm_min_interval_s - (time.monotonic() - _last_call)
+    if wait > 0:
+        time.sleep(wait)
+    _last_call = time.monotonic()
+
+
 def _call(system: str, user: str, fast: bool, max_tokens: int) -> str:
+    _throttle()
     provider = settings.llm_provider
     model = _model(fast)
     if provider == "anthropic":
         import anthropic
 
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key or None)
+        client = anthropic.Anthropic(api_key=settings.llm_api_key or None)
         msg = client.messages.create(
             model=model, max_tokens=max_tokens, system=system,
             messages=[{"role": "user", "content": user}],
@@ -57,7 +71,7 @@ def _call(system: str, user: str, fast: bool, max_tokens: int) -> str:
     if provider in {"openai", "openai_compatible"}:
         from openai import OpenAI
 
-        client = OpenAI(api_key=settings.openai_api_key or None, base_url=settings.llm_base_url or None)
+        client = OpenAI(api_key=settings.llm_api_key or None, base_url=settings.llm_base_url or None)
         resp = client.chat.completions.create(
             model=model, max_tokens=max_tokens,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -94,7 +108,7 @@ def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, ma
         except Exception as exc:  # network / rate limit
             last_err = ""
             log.info("LLM call failed (attempt %d): %s", attempt + 1, type(exc).__name__)
-            time.sleep(4 * (attempt + 1))
+            time.sleep(15 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))
     raise LLMError(f"LLM did not return valid {schema.__name__}")
 
 

@@ -27,12 +27,12 @@ class Settings:
     database_url: str = field(default_factory=lambda: _str("DATABASE_URL"))
 
     # LLM (provider-agnostic)
-    llm_provider: str = field(default_factory=lambda: _str("LLM_PROVIDER", "anthropic"))  # anthropic | openai | openai_compatible
+    llm_provider: str = field(default_factory=lambda: _str("LLM_PROVIDER", "openai_compatible"))  # openai_compatible (default, free Gemini) | openai | anthropic
     llm_model: str = field(default_factory=lambda: _str("LLM_MODEL"))
     llm_model_fast: str = field(default_factory=lambda: _str("LLM_MODEL_FAST"))
     llm_base_url: str = field(default_factory=lambda: _str("LLM_BASE_URL"))  # for openai_compatible (OpenRouter, Groq, Ollama…)
-    anthropic_api_key: str = field(default_factory=lambda: _str("ANTHROPIC_API_KEY"))
-    openai_api_key: str = field(default_factory=lambda: _str("OPENAI_API_KEY"))
+    llm_api_key: str = field(default_factory=lambda: _str("LLM_API_KEY"))  # one key, whichever provider
+    llm_min_interval_s: float = field(default_factory=lambda: float(_str("LLM_MIN_INTERVAL_S", "0") or 0))  # throttle for free-tier rate limits
 
     # Optional integrations
     firecrawl_api_key: str = field(default_factory=lambda: _str("FIRECRAWL_API_KEY"))
