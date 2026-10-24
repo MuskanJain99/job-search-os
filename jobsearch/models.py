@@ -95,3 +95,7 @@ class ThreadClass(BaseModel):
     scheduling_link: str | None = None
     needs_owner: bool = Field(description="true if Muskan must personally respond or decide")
     summary: str = Field(description="one line, no personal data beyond company/role")
+
+
+class Draft(BaseModel):
+    text: str = Field(description="the drafted answer, plain text, no markdown")

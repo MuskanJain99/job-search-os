@@ -200,10 +200,33 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
         return hit("COI-02")
     if re.search(r"(previously|ever|currently|now).{0,25}(work|employ|consult|provid)\w*.{0,30}(for|at|by|to)\b|have you (ever )?been employed by", label):
         return hit("APQ-03", "No") if "APQ-03" in by_id else None
-    m = re.search(r"(?:at least|over|more than|minimum(?: of)?)\s*(\d+)\+?\s*(?:years|yrs)", label)
-    if m and "experience" in label and not _TECH.search(label) and re.search(r"software|professional|relevant|full[- ]time|working|overall|total", label):
-        return ("Yes" if total_years >= int(m.group(1)) else "No", "EXP-01")
+    m = re.search(r"(?:at least|over|more than|minimum(?: of)?|min\.?)\s*(\d+)\+?\s*(?:years|yrs)|(\d+)\+\s*(?:years|yrs)", label)
+    if m and "experience" in label:
+        need = int(m.group(1) or m.group(2))
+        generic = not _TECH.search(label) and re.search(r"software|professional|relevant|full[- ]time|working|overall|total", label)
+        have = total_years if generic else 4.0  # any named skill: 4 years (her standing instruction)
+        return ("Yes" if have >= need else "No", "EXP-01" if generic else "EXP-04")
     return None
+
+
+_OPEN_ENDED = re.compile(r"why |what (interests|excites|motivates|attracts)|interested in|tell us|describe|about yourself|"
+                         r"passion|motivat|proud|cover letter|anything else|additional information|share with us|in your own words")
+DRAFT_TASK = """Write the answer to this job-application question as Muskan, in first person, plain text, 3-5 sentences (max 110 words).
+Use ONLY facts from <evidence> (her real work) and the job description for context; no invented employers, numbers, tools or
+achievements. Be specific, warm and direct; no buzzwords, no markdown, no greeting or sign-off."""
+
+
+def draft_answer(label: str, company: str, title: str, evidence: list[dict], jd: str) -> str | None:
+    from .llm import ask_json as _ask
+    from .models import Draft
+
+    ev = "\n".join(f"{e['claim_id']}: {e['claim']}" for e in evidence[:80])
+    payload = (f"<evidence>\n{ev}\n</evidence>\nCompany: {company}\nRole: {title}\n"
+               + untrusted((jd or "")[:3500], 3500) + f"\nQuestion: {label}")
+    try:
+        return _ask(DRAFT_TASK, payload, Draft, fast=False, max_tokens=700).text.strip() or None
+    except LLMError:
+        return None
 
 
 @dataclass
@@ -214,7 +237,7 @@ class Resolved:
 
 
 def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_title: str, company: str,
-            user_answers: dict[str, str] | None = None, job_location: str = "") -> Resolved:
+            user_answers: dict[str, str] | None = None, job_location: str = "", jd: str = "") -> Resolved:
     """user_answers: {question label: answer} that Muskan gave directly (email reply) — used verbatim."""
     user_answers = {k.strip().lower(): v for k, v in (user_answers or {}).items()}
     if user_answers and all(f.get("label", "").strip().lower() in user_answers or not f.get("required") for f in fields) \
@@ -260,6 +283,13 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
             if required:
                 blockers.append(("NEVER_ANSWER", label))
             continue
+        if (a is None or a.answer in (None, "")) and f.get("type") in ("textarea", "text") and _OPEN_ENDED.search(low) \
+                and not any(w in low for w in HARD_STOP_WORDS):
+            text = draft_answer(label, company, job_title, evidence, jd)
+            if text:
+                values[fid] = text
+                prov.append({"question_text": label[:500], "profile_id": None, "answer": text[:2000], "basis": "GENERATED"})
+                continue
         if a is None or a.answer in (None, ""):
             kind = a.basis if a else "UNKNOWN"
             if required:

@@ -33,7 +33,7 @@ def test_digest_questions_now_answered():
     assert ans("Do you currently work for, or have you previously worked for Zscaler?*") == "No"
     assert ans("Do you have at least 9 years of full time relevant working experience?") == "No"
     assert ans("Do you have over 3 years over professional software engineering experience?*") == "Yes"
-    assert ans("Do you have 4+ years of Golang experience?") is None  # skill-specific: not a generic rule
+    assert ans("Do you have 4+ years of Golang experience?") == "Yes"  # any named skill = 4 years
     assert ans("Job Applicant Data Privacy Notice*") == "Yes"
     assert ans("Sex*") == "Female" and ans("Preferred First Name*") == "Muskan"
     assert ans("Postal/Zip Code") == "500055" and ans("Province/State") == "Telangana"
@@ -41,3 +41,9 @@ def test_digest_questions_now_answered():
 
 def test_unknowns_stay_unknown():
     assert ans("Website") is None and ans("Address Line 1") is None and ans("Home Address*") is None
+
+
+def test_any_skill_is_four_years():
+    assert ans("Do you have minimum 4 years of experience in Spark?") == "Yes"
+    assert ans("Do you have a minimum of 5 years of experience in Cloud?") == "No"
+    assert ans("Do you have 4+ years of experience designing and scaling ML pipelines?") == "Yes"

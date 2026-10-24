@@ -165,7 +165,7 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
     fields = page.evaluate(FIELDS_JS)
     stored = {row["question_text"]: row["answer"] for row in conn.execute(
         "select question_text, answer from app_answers where application_id=%s", (app_id,)).fetchall()}
-    res = answering.resolve_with_owner(r, app_id, fields, profile, evidence, app["title"], app["company"] or "")
+    res = answering.resolve_with_owner(r, app_id, fields, profile, evidence, app["title"], app["company"] or "", jd=app.get("jd_text") or "")
     if res is None:
         return  # she was alerted; no answer in time → recorded, move on
     for a in res.provenance:
