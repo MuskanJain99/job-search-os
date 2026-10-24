@@ -92,10 +92,23 @@ def deterministic(fields: list[dict], profile: list[dict], job_location: str = "
         if _RELOC_ASSIST.search(label) and any(p["id"] == "REL-07" for p in profile):
             out[f["field_id"]] = (relocation_assistance(job_location), "REL-07")
             continue
+        saved = next((p for p in profile if p["id"].startswith("USR-") and p["answer_type"] == "VALUE" and _norm(p["field"]) == _norm(label)), None)
+        if saved:  # an answer she gave before (digest email) for this exact question
+            out[f["field_id"]] = (str(saved["answer"]).strip(), saved["id"])
+            continue
         hit = next((pid for pat, pid in _YES_NO_RULES if re.search(pat, label) and pid in by_id), None)
         if hit:
             out[f["field_id"]] = (str(by_id[hit]["answer"]).strip(), hit)
             continue
+        if t != "file":
+            try:
+                total = float(by_id["EXP-01"]["answer"])
+            except (KeyError, ValueError, TypeError):
+                total = 4.3
+            ctx = contextual(label, t or "", by_id, in_india(job_location), total)
+            if ctx and ctx[0]:
+                out[f["field_id"]] = ctx
+                continue
         if years_rule and t in ("select", "radio", "combobox") and _TOTAL_EXP.search(label) and not _SKILL_SPECIFIC.search(label):
             from . import ranges
 
@@ -109,6 +122,88 @@ def deterministic(fields: list[dict], profile: list[dict], job_location: str = "
                 out[f["field_id"]] = (str(by_id[pid]["answer"]).strip(), pid)
                 break
     return out
+
+
+_INDIA_WORDS = ("india", "hyderabad", "bengaluru", "bangalore", "gurugram", "gurgaon", "pune", "mumbai", "delhi", "noida", "chennai", "kolkata")
+_FOREIGN = re.compile(r"united states|\bu\.?s\.?a?\b|canada|chile|united kingdom|\buk\b|singapore|germany|ireland|netherlands|poland|"
+                      r"australia|\buae\b|emirates|france|spain|brazil|mexico|philippines|europe")
+_TECH = re.compile(r"\b(go|golang|typescript|javascript|node|java|python|rust|kotlin|scala|c\+\+|kubernetes|aws|azure|gcp|terraform|"
+                   r"react|helm|security|sql|spark|kafka)\b")
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[\s*:?]+", " ", text.lower()).strip()
+
+
+def in_india(job_location: str) -> bool | None:
+    loc = (job_location or "").lower()
+    if not loc:
+        return None
+    return any(w in loc for w in _INDIA_WORDS)
+
+
+def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_years: float) -> tuple[str, str] | None:
+    """Standing answers that depend on the question wording and the job's country. (answer, profile id) or None."""
+    def v(pid: str) -> str | None:
+        return str(by_id[pid]["answer"]).strip() if pid in by_id else None
+
+    def hit(pid: str, text: str | None = None):
+        val = text if text is not None else v(pid)
+        return (val, pid) if val else None
+
+    if re.search(r"how did you (hear|learn)|where did you (hear|find|see)", label):
+        return hit("APQ-02", "LinkedIn") if "APQ-02" in by_id else None
+    if re.search(r"^current (company|employer|firm)|current firm|firm you.?re part of", label):
+        return hit("EXP-06")
+    if re.search(r"^current (job )?title|^current role", label):
+        return hit("EXP-05")
+    if re.search(r"(privacy (notice|policy)|data privacy)|consent.{0,40}(collect|stor|process).{0,60}(response|demographic|data)", label):
+        return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
+    if re.search(r"confidential information", label):
+        return hit("COI-04", "Yes") if "COI-04" in by_id else None
+    if re.search(r"(18|eighteen)\s*(years|\+)|over the age of 18|at least 18", label):
+        return ("Yes", "ID-06")
+    if re.search(r"^(what is your )?legal first name", label):
+        return hit("ID-01")
+    if re.search(r"^preferred (first )?name", label):
+        return hit("ID-04")
+    if re.search(r"^(sex|gender)\b", label) and ftype != "textarea":
+        return hit("EEO-01")
+    if re.search(r"^(province|state)(/| or )?(province|state)?$|^state$", label):
+        return hit("LOC-03")
+    if re.search(r"postal|zip", label):
+        return hit("LOC-04")
+    if re.search(r"city and state|primary residence", label):
+        return hit("LOC-02")
+    if re.search(r"\bcity\b", label) and re.search(r"reside|live|location|^city$|current", label):
+        return hit("LOC-02", (v("LOC-02") or "").split(",")[0] or None)
+    if re.search(r"^current location|^location$", label):
+        return hit("LOC-02")
+    if re.search(r"country of residence|current country", label):
+        if re.search(r"visa|sponsor|permit", label):
+            return hit("AUT-05")
+        if re.search(r"authori|eligible|right to work", label):
+            return hit("AUT-01")
+    if re.search(r"(require|need).{0,40}(visa|sponsorship|work permit)|(visa|sponsorship|work permit).{0,40}(require|need)", label):
+        return None if india is None else hit("AUT-05" if india else "AUT-04")
+    if re.search(r"authori[sz]ed|legal(ly)? .{0,12}right|right to work|eligible to work", label) and "work" in label:
+        if _FOREIGN.search(label):
+            return hit("AUT-03")
+        if "india" in label:
+            return hit("AUT-01")
+        return None if india is None else hit("AUT-01" if india else "AUT-03")
+    if re.search(r"commutable|within .{0,20}distance|currently live in this location|do you live in", label):
+        return None if india is None else (("Yes", "ARR-03") if india else ("No", "ARR-03"))
+    if re.search(r"(client, partner|partner, or competitor|competitor)", label) and re.search(r"employ|work", label):
+        return hit("COI-03")
+    if re.search(r"restrictive covenant|non-?compete|non-?solicit|post-employment restriction|employment agreements?", label):
+        return hit("COI-02")
+    if re.search(r"(previously|ever|currently|now).{0,25}(work|employ|consult|provid)\w*.{0,30}(for|at|by|to)\b|have you (ever )?been employed by", label):
+        return hit("APQ-03", "No") if "APQ-03" in by_id else None
+    m = re.search(r"(?:at least|over|more than|minimum(?: of)?)\s*(\d+)\+?\s*(?:years|yrs)", label)
+    if m and "experience" in label and not _TECH.search(label) and re.search(r"software|professional|relevant|full[- ]time|working|overall|total", label):
+        return ("Yes" if total_years >= int(m.group(1)) else "No", "EXP-01")
+    return None
 
 
 @dataclass

@@ -63,6 +63,8 @@ def send_question_digest(r: db.Run) -> int:
            left join companies c on c.id=j.company_id
            where b.resolved_at is null and b.type='ASK_ME' and b.question_text is not null
              and b.detail not like '%%(#%%' and a.status='BLOCKED'
+             and not exists (select 1 from blockers o where o.question_text = b.question_text and o.detail like '%%(#%%'
+                             and o.created_at > now() - interval '7 days')
            order by b.created_at""").fetchall()
     if not rows:
         return 0
