@@ -96,7 +96,9 @@ def run() -> None:
                from applications a join jobs j on j.id=a.job_id left join companies c on c.id=j.company_id
                left join lateral (select score from fit_scores where job_id=j.id order by created_at desc limit 1) f on true
                where a.status='READY' and a.next_action='submit' and a.channel = any(%s)
-               order by (a.discovered_via='user_link') desc, a.priority, f.score desc nulls last limit %s""",
+               order by (a.discovered_via='user_link') desc,
+                        row_number() over (partition by c.id order by a.priority, f.score desc nulls last),  -- one per company first
+                        a.priority, f.score desc nulls last limit %s""",
             (list(CLOUD_SUBMIT), budget)).fetchall()
         r.summary["queued"] = len(queue)
         if not queue:
@@ -108,13 +110,21 @@ def run() -> None:
 
         with sync_playwright() as pw, tempfile.TemporaryDirectory() as tmp:
             browser = pw.chromium.launch()
+            company_errors: dict[str, int] = {}
             for app in queue:
+                if company_errors.get(app["company"] or "", 0) >= 2:  # this employer's form keeps failing: others get a turn
+                    db.set_application_status(r, str(app["id"]), "READY", next_action="laptop_submit")
+                    r.bump("deferred_to_laptop")
+                    continue
                 ctx = browser.new_context(locale="en-IN", timezone_id="Asia/Kolkata", viewport={"width": 1366, "height": 900})
                 try:
                     submit_one(r, ctx.new_page(), app, header, profile, evidence, Path(tmp))
                 except Exception as exc:
                     r.bump("errors")
                     r.audit("submit.error", "applications", str(app["id"]), kind=type(exc).__name__, msg=str(exc)[:300])
+                    company_errors[app["company"] or ""] = company_errors.get(app["company"] or "", 0) + 1
+                    # Never retry a failing form from the cloud on every run: the laptop helper (real Chrome) takes it.
+                    db.set_application_status(r, str(app["id"]), "READY", next_action="laptop_submit")
                 finally:
                     ctx.close()
             browser.close()

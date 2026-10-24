@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from .llm import ask_json, untrusted
+from .llm import LLMError, ask_json, untrusted
 from .models import FormAnswers
 
 BLOCKING_TYPES = {"ASK_ME", "NEVER_ANSWER_AUTOMATICALLY"}
@@ -72,17 +72,23 @@ def relocation_assistance(job_location: str) -> str:
     return "No" if "hyderabad" in (job_location or "").lower() else "Yes"
 
 
-def deterministic(fields: list[dict], profile: list[dict], job_location: str = "") -> dict[str, tuple[str, str]]:
+def deterministic(fields: list[dict], profile: list[dict], job_location: str = "") -> dict[str, tuple[str, str | None]]:
     """field_id -> (value, profile_id) for fields with one obvious answer in the approved profile.
     Only VALUE entries (and the EXP-13 years rule) are used; anything else goes to the model."""
     by_id = {p["id"]: p for p in profile if p["answer_type"] == "VALUE" and p.get("answer")}
     years_rule = next((p for p in profile if p["id"] == "EXP-13" and p.get("answer")), None)
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, tuple[str, str | None]] = {}
     for f in fields:
         t = f.get("type")
-        if t in ("file", "textarea"):
-            continue
         label = re.sub(r"[*:]", "", f.get("label", "")).strip().lower()
+        if t == "file":
+            if re.search(r"cover letter", label):
+                out[f["field_id"]] = ("__COVER_LETTER__", None)
+            elif re.search(r"resume|\bcv\b|curriculum", label):
+                out[f["field_id"]] = ("__RESUME__", None)
+            continue
+        if t == "textarea":
+            continue
         if _RELOC_ASSIST.search(label) and any(p["id"] == "REL-07" for p in profile):
             out[f["field_id"]] = (relocation_assistance(job_location), "REL-07")
             continue
@@ -126,13 +132,20 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
     prof = "\n".join(f"{p['id']} [{p['answer_type']}] {p['field']}: {p['answer']}"
                      + (f" (when: {p['applies_when']})" if p.get("applies_when") else "") for p in profile)
     ev = "\n".join(f"{e['claim_id']}: {e['claim']}" for e in evidence[:60])
-    payload = (f"<profile>\n{prof}\n</profile>\n<evidence>\n{ev}\n</evidence>\nJob: {job_title} at {company}"
-               f" (location: {job_location or 'unknown'})\n"
-               + untrusted(json.dumps(fields, ensure_ascii=False), 15000))
-    out = ask_json(TASK.format(today=date.today().isoformat()), payload, FormAnswers, fast=True, max_tokens=6000)
-
-    proposed = {a.field_id: a for a in out.answers}
     det = deterministic(fields, profile, job_location)
+    head = (f"<profile>\n{prof}\n</profile>\n<evidence>\n{ev}\n</evidence>\nJob: {job_title} at {company}"
+            f" (location: {job_location or 'unknown'})\n")
+    # Only fields the rules couldn't settle go to the model, a few at a time: long forms made it return invalid JSON.
+    todo = [f for f in fields if f["field_id"] not in det and f.get("label", "").strip().lower() not in user_answers]
+    proposed: dict = {}
+    for i in range(0, len(todo), 8):
+        chunk = todo[i:i + 8]
+        try:
+            out = ask_json(TASK.format(today=date.today().isoformat()),
+                           head + untrusted(json.dumps(chunk, ensure_ascii=False), 9000), FormAnswers, fast=False, max_tokens=4000)
+            proposed.update({a.field_id: a for a in out.answers})
+        except LLMError:
+            pass  # these fields stay unknown: required ones become questions, optional ones are left empty
     values: dict[str, str] = {}
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []

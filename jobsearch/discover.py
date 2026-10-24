@@ -29,11 +29,20 @@ QUERIES_PER_RUN = int(os.environ.get("AGGREGATOR_QUERIES_PER_RUN", "12"))
 def collect(conn, cfg) -> list[Posting]:
     out: list[Posting] = []
     # 1) Watched companies' public ATS boards
+    from concurrent.futures import ThreadPoolExecutor
+
+    from .seeds import SEEDS
+
+    for name, kind, token in SEEDS:  # generous watch list; boards that don't exist return nothing
+        conn.execute(
+            "insert into companies (name, normalized_name, ats, ats_token, priority) values (%s,%s,%s,%s,3) on conflict do nothing",
+            (name, targeting.normalize(name), kind, token))
     companies = conn.execute(
         "select id, name, ats, ats_token from companies where active and ats in ('greenhouse','lever','ashby','smartrecruiters') "
-        "order by priority, last_polled_at nulls first limit 60").fetchall()
-    for c in companies:
-        posts = ats.fetch_board(c["ats"], c["ats_token"])
+        "and ats_token is not null order by priority, last_polled_at nulls first limit 250").fetchall()
+    with ThreadPoolExecutor(max_workers=8) as ex:  # boards are independent public JSON feeds
+        boards = list(ex.map(lambda c: ats.fetch_board(c["ats"], c["ats_token"]), companies))
+    for c, posts in zip(companies, boards, strict=True):
         for p in posts:
             p.company_name = p.company_name or c["name"]
         out.extend(posts)
