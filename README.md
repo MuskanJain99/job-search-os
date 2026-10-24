@@ -48,6 +48,12 @@ for the sites that need a signed-in browser.
 | `jobsearch ingest <url>` | Paste-a-link: put a job at the front of the queue | on demand (workflow input) |
 | `jobsearch laptop auto|assist|login` | Laptop helper (see below) | every 2 h when the Mac is awake |
 
+## Cloud-only mode
+
+Nothing runs on your computer. The GitHub Actions pipeline submits public employer forms (Greenhouse, Lever, Ashby,
+SmartRecruiters, Workable and plain company career pages). Jobs that need a signed-in board (LinkedIn, Naukri…), an
+account (Workday…), a CAPTCHA, or that fail twice are skipped. The laptop helper still exists but is optional and unused.
+
 ## Apply policy
 
 `pipeline_config.apply_policy = ALL_ELIGIBLE`: apply to every mid-level software/backend/AI/platform/full-stack

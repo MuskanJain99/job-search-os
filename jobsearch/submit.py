@@ -17,7 +17,7 @@ from pathlib import Path
 from . import answering, db, ranges, resume_pdf
 from .config import settings
 from .log import get_logger
-from .sources.aggregators import CLOUD_SUBMIT
+from .sources.aggregators import CLOUD_TRY
 
 log = get_logger("submit")
 
@@ -95,11 +95,11 @@ def run() -> None:
                       c.name as company, f.score
                from applications a join jobs j on j.id=a.job_id left join companies c on c.id=j.company_id
                left join lateral (select score from fit_scores where job_id=j.id order by created_at desc limit 1) f on true
-               where a.status='READY' and a.next_action='submit' and a.channel = any(%s)
+               where a.status='READY' and a.next_action in ('submit','laptop_submit') and a.channel = any(%s)
                order by (a.discovered_via='user_link') desc,
                         row_number() over (partition by c.id order by a.priority, f.score desc nulls last),  -- one per company first
                         a.priority, f.score desc nulls last limit %s""",
-            (list(CLOUD_SUBMIT), budget)).fetchall()
+            (list(CLOUD_TRY), budget)).fetchall()
         r.summary["queued"] = len(queue)
         if not queue:
             return
@@ -113,8 +113,8 @@ def run() -> None:
             company_errors: dict[str, int] = {}
             for app in queue:
                 if company_errors.get(app["company"] or "", 0) >= 2:  # this employer's form keeps failing: others get a turn
-                    db.set_application_status(r, str(app["id"]), "READY", next_action="laptop_submit")
-                    r.bump("deferred_to_laptop")
+                    _skip(r, str(app["id"]), "this employer's form keeps failing")
+                    r.bump("deferred_skipped")
                     continue
                 ctx = browser.new_context(locale="en-IN", timezone_id="Asia/Kolkata", viewport={"width": 1366, "height": 900})
                 try:
@@ -123,11 +123,16 @@ def run() -> None:
                     r.bump("errors")
                     r.audit("submit.error", "applications", str(app["id"]), kind=type(exc).__name__, msg=str(exc)[:300])
                     company_errors[app["company"] or ""] = company_errors.get(app["company"] or "", 0) + 1
-                    # Never retry a failing form from the cloud on every run: the laptop helper (real Chrome) takes it.
-                    db.set_application_status(r, str(app["id"]), "READY", next_action="laptop_submit")
+                    tries = conn.execute("select count(*) n from audit_log where action='submit.error' and entity_id::text=%s", (str(app["id"]),)).fetchone()["n"]
+                    if tries >= 2:  # failed twice: give up on this one, the queue moves on
+                        _skip(r, str(app["id"]), f"form could not be completed ({type(exc).__name__})")
                 finally:
                     ctx.close()
             browser.close()
+
+
+def _skip(r: db.Run, app_id: str, why: str) -> None:
+    db.set_application_status(r, app_id, "SKIPPED", skip_reason=why[:200], next_action=None)
 
 
 def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp: Path) -> None:
@@ -148,13 +153,13 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
             btn.click()
             page.wait_for_timeout(2000)
     needs_login = any(t in body for t in ("create an account", "create account", "sign in to apply", "log in to apply"))
-    if needs_login:  # portal accounts are created by the laptop helper (accounts.py), not in the cloud
-        db.set_application_status(r, app_id, "READY", next_action="laptop_submit")
-        r.bump("handed_to_laptop")
+    if needs_login:
+        _skip(r, app_id, "account/sign-in required")
+        r.bump("skip_login")
         return
-    if _captcha(page):  # the cloud has no screen: hand to the laptop helper, which alerts her and waits 2 min
-        db.set_application_status(r, app_id, "READY", next_action="laptop_submit")
-        r.bump("captcha_to_laptop")
+    if _captcha(page):
+        _skip(r, app_id, "CAPTCHA")
+        r.bump("skip_captcha")
         return
 
     fields = page.evaluate(FIELDS_JS)
@@ -185,16 +190,15 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
         return
     if failed:
         # A field we meant to fill wasn't fillable: never submit a half-filled form from the cloud.
-        db.set_application_status(r, app_id, "READY", next_action="laptop_submit")
-        r.bump("fill_failed_to_laptop")
+        _skip(r, app_id, "a form field could not be filled")
+        r.bump("skip_fill_failed")
         return
     page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click()
     page.wait_for_timeout(6000)
     after = page.inner_text("body").lower()[:20000]
     if any(t in after for t in ("verification code", "security code", "enter the code")) or _captcha(page):
-        # The cloud can't hand this to a human; the laptop helper re-runs it with a live 2-minute hand-off.
-        db.set_application_status(r, app_id, "READY", next_action="laptop_submit")
-        r.bump("verification_to_laptop")
+        _skip(r, app_id, "verification code/CAPTCHA after submit")
+        r.bump("skip_verification")
         return
     confirmed = any(t in after for t in CONFIRM_TEXT)
     db.set_application_status(r, app_id, "SUBMITTED_CONFIRMED" if confirmed else "SUBMITTED", submitted_at=_now(),

@@ -242,9 +242,14 @@ def prepare(r: db.Run, job_id: str, p: Posting, company: str, score: int, eviden
     if not stopped:
         # Cloud handles public employer forms; the laptop helper handles everything else
         # (signed-in boards, external "Apply" links, Workday/company sites).
-        nxt = "submit" if channel in aggregators.CLOUD_SUBMIT else "laptop_submit"
-        db.set_application_status(r, app_id, "READY", next_action=nxt)
-        r.bump(f"ready_{nxt}")
+        # Fully cloud mode: only public employer forms can be submitted. Signed-in boards and account-wall portals
+        # (Workday, iCIMS, Taleo…) are skipped instead of waiting for a laptop that isn't there.
+        if channel in aggregators.CLOUD_TRY:
+            db.set_application_status(r, app_id, "READY", next_action="submit")
+            r.bump("ready_submit")
+        else:
+            db.set_application_status(r, app_id, "SKIPPED", skip_reason=f"{channel}: needs a signed-in board or account (cloud-only)", next_action=None)
+            r.bump("skip_needs_login_channel")
     return app_id
 
 

@@ -126,6 +126,7 @@ def apply_channel(url: str) -> str:
 
 CLOUD_SUBMIT = {"greenhouse", "lever", "ashby", "smartrecruiters", "workable"}
 LAPTOP_SUBMIT = {"linkedin", "indeed", "naukri", "instahyre", "glassdoor", "cutshort", "wellfound"}
+CLOUD_TRY = CLOUD_SUBMIT | {"company_site"}  # cloud-only mode: public employer forms, no sign-in needed
 MANUAL = {"workday", "icims", "taleo", "successfactors", "company_site"}
 
 
