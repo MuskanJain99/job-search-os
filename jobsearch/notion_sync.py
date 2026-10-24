@@ -17,6 +17,8 @@ STATUS = {  # Supabase status -> (Status, Submission State, Pipeline Stage)
     "PREPARING": ("Application In Progress", "Preparing", "Preparing"),
     "READY": ("Application In Progress", "Ready for Submission", "Ready for Submission"),
     "BLOCKED": ("Application In Progress", "Blocked", "Preparing"),
+    "SKIPPED": ("Application In Progress", "Blocked", "Closed"),   # reason shown in the Blocker column
+    "CLOSED": ("No Response", "Not Started", "Closed"),
     "SUBMITTED": ("In Process", "Submitted Unconfirmed", "Closed"),
     "SUBMITTED_CONFIRMED": ("In Process", "Submitted Confirmed", "Closed"),
     "INTERVIEWING": ("Interview Scheduled", "Submitted Confirmed", "Closed"),
@@ -40,7 +42,7 @@ def _props(a: dict) -> dict:
         "Priority": {"select": {"name": {1: "High", 2: "High", 3: "Medium"}.get(a["priority"], "Low")}},
         "Application Submitted?": {"select": {"name": "Yes" if a["submitted_at"] else "No"}},
         "Next Action": {"rich_text": [{"text": {"content": (a["next_action"] or "")[:200]}}]},
-        "Blocker": {"rich_text": [{"text": {"content": (a["blocker"] or "")[:500]}}]},
+        "Blocker": {"rich_text": [{"text": {"content": (a["blocker"] or a.get("skip_reason") or "")[:500]}}]},
     }
     if a["submitted_at"]:
         p["Date of Application"] = {"date": {"start": a["submitted_at"].date().isoformat()}}
@@ -56,7 +58,7 @@ def run() -> None:
             r.summary["skipped"] = "dry_run"
             return
         rows = r.conn.execute(
-            """select a.id, a.status, a.priority, a.submitted_at, a.next_action, a.notion_page_id, j.title, j.url,
+            """select a.id, a.status, a.skip_reason, a.priority, a.submitted_at, a.next_action, a.notion_page_id, j.title, j.url,
                       c.name as company, f.verdict,
                       (select coalesce(question_text, detail) from blockers b where b.application_id=a.id and b.resolved_at is null
                        order by created_at desc limit 1) as blocker
@@ -68,9 +70,14 @@ def run() -> None:
             for a in rows:
                 props = _props(a)
                 try:
+                    res = None
                     if a["notion_page_id"]:
-                        c.patch(f"{API}/pages/{a['notion_page_id']}", json={"properties": props}).raise_for_status()
-                    else:
+                        res = c.patch(f"{API}/pages/{a['notion_page_id']}", json={"properties": props})
+                        if res.status_code == 400 and "archived" in res.text:  # page was deleted in Notion: recreate it
+                            res = None
+                        else:
+                            res.raise_for_status()
+                    if res is None:
                         res = c.post(f"{API}/pages", json={"parent": {"database_id": settings.notion_applications_db},
                                                            "properties": props})
                         res.raise_for_status()
