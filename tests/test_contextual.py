@@ -4,7 +4,7 @@ PROFILE = [{"id": i, "answer_type": "VALUE", "field": f, "answer": a, "applies_w
     ("APQ-02", "hear", "Job board — LinkedIn"), ("APQ-03", "prev", "No"), ("EXP-01", "exp", "4.3"),
     ("EXP-05", "title", "Software Engineer"), ("EXP-06", "emp", "IBM"), ("AUT-01", "a", "Yes"), ("AUT-03", "b", "No"),
     ("AUT-04", "c", "Yes"), ("AUT-05", "d", "No"), ("LOC-02", "city", "Hyderabad, Telangana"), ("LOC-03", "st", "Telangana"),
-    ("LOC-04", "zip", "500055"), ("CNS-01", "cns", "Yes / Yes / Yes"), ("COI-02", "nc", "No"), ("COI-03", "comp", "No"),
+    ("LOC-04", "zip", "500055"), ("CNS-01", "cns", "Yes / Yes / Yes"), ("CNS-03", "ai", "Yes / Yes"), ("SEC-03", "gov", "No"), ("COI-05", "rel", "No"), ("EXP-07", "deg", "Master"), ("ARR-02", "arr", "Yes / Yes / Yes"), ("APQ-07", "oss", "None"), ("CMP-06", "c6", "x"), ("CMP-07", "c7", "x"), ("LOC-01", "ctry", "India"), ("COI-02", "nc", "No"), ("COI-03", "comp", "No"),
     ("COI-04", "conf", "Yes"), ("ID-04", "pf", "Muskan"), ("ID-06", "dob", "x"), ("EEO-01", "sex", "Female"),
     ("USR-AAAAAA", "What was your undergraduate GPA?", "7.2")]]
 
@@ -58,3 +58,37 @@ def test_workato_style_questions():
     assert ans("Do you have professional experience with Ruby on Rails?") == "Yes"
     assert ans("Do you have experience with Git and CI/CD pipelines?") == "Yes"
     assert ans("Do you have experience in any of the following?") is None
+
+
+def test_second_batch_variants():
+    cases = {
+        "Please provide the name of your current (or most recent) company": "IBM",
+        "Have you previously been employed by Coinbase in any capacity?": "No",
+        "I understand that Coinbase may use AI tools to assist in the application and interview process.": "Yes",
+        "Are you a current government official or were you a government official in the last five years (e.g., employee of a government agency)?": "No",
+        "Are you a close relative of a government official (i.e., child/step-child, spouse/partner, parent/guardian)?": "No",
+        "To your knowledge, do you or a close relative currently hold a role, have a significant financial interest in, or maintain a close personal relationship with a senior leader at a company connected to Coinbase that could create an actual or perceived conflict of interest?": "No",
+        "To your knowledge, were you referred to this position by a senior leader or decision‑maker at a current or prospective institutional client, business partner, or vendor of Coinbase?": "No",
+        "Are you based in Canada currently?": "No",
+        "Do you have a Bachelor’s or Master’s degree in Computer Science, Computer Engineering or a related field?": "Yes",
+        "Do you hold a bachelor’s degree?": "Yes",
+        "Are you comfortable working in a hybrid work environment in Chennai?": "Yes",
+        "Are you legally entitled to work in Canada?": "No",
+        "Which state or province do you currently live in?": "Telangana",
+        "Are you currently, or have you previously, worked at Instacart?": "No",
+        "What is your current work location (Country)?": "India",
+        "Do you have experience operating AWS infrastructure at scale? (Select one)": "Yes",
+        "Years of experience with Terraform and Kubernetes?": "4",
+        "Total years of experience in infrastructure or systems engineering roles?": "4",
+        "Have you contributed to or maintained any open-source infrastructure projects? If yes, please share details.": None,
+        "Do you have hands-on experience developing frontend features using React or Angular?": "Yes",
+        "By checking this box, I confirm I have read, reviewed and understood the guidelines outlined in the Candidate AI Responsible Use Policy.": "Yes",
+        "Please confirm whether any of the below applies to you. Select all that apply. Note: ... U.S. sanctions and export controls.": "None of the above",
+    }
+    for label, want in cases.items():
+        got = ans(label, t="checkbox" if label.startswith("By checking") else "text")
+        if want is None:
+            continue
+        assert got == want, (label, got, want)
+    assert ans("What is your expected compensation?") == "INR 35-40 LPA"
+    assert ans("Do you have experience leading a technical roadmap?") is None

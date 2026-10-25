@@ -153,10 +153,41 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
 
     if re.search(r"how did you (hear|learn)|where did you (hear|find|see)", label):
         return hit("APQ-02", "LinkedIn") if "APQ-02" in by_id else None
-    if re.search(r"^current (company|employer|firm)|current firm|firm you.?re part of", label):
+    if re.search(r"current( \(or most recent\))? (company|employer|firm)|most recent (company|employer)|current firm|firm you.?re part of|"
+                 r"name of your current", label):
         return hit("EXP-06")
-    if re.search(r"^current (job )?title|^current role", label):
+    if re.search(r"current( \(or most recent\))? (job )?title|most recent (job )?title|current (role|position)|^job title", label):
         return hit("EXP-05")
+    if re.search(r"sanction|export control", label):
+        return ("None of the above", "BGC-01")
+    if re.search(r"(work|current).{0,20}location.{0,12}country|country.{0,20}(work|current)", label) and not re.search(r"visa|authori", label):
+        return hit("LOC-01")
+    if re.search(r"open[- ]source", label):
+        return hit("APQ-07")
+    if re.search(r"government official|public office|civil service|government.{0,20}employee", label) and "relative" not in label:
+        return hit("SEC-03")
+    if re.search(r"close relative|relative of|family member|close personal relationship|conflict of interest|actual or perceived conflict", label):
+        return hit("COI-05")
+    if re.search(r"referred.{0,50}(client|vendor|partner|decision|senior leader)", label):
+        return ("No", "COI-05")
+    if re.search(r"\b(ai|artificial intelligence|automated)\b.{0,40}(tool|process|screen|assist)", label) and \
+            re.search(r"understand|consent|acknowledge|agree|may use", label):
+        return hit("CNS-03", "Yes") if "CNS-03" in by_id else None
+    if re.search(r"by (checking|selecting|submitting|clicking).{0,60}(confirm|understand|agree|acknowledge|have read|certify)|"
+                 r"i (have read|agree|acknowledge|understand)", label) and ftype in ("checkbox", "select", "radio", "combobox", "text"):
+        return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
+    if re.search(r"(hold|have|completed|earned|possess).{0,20}(bachelor|master|degree|b\.?e\b|b\.?tech)", label):
+        return ("Yes", "EXP-07")
+    if re.search(r"comfortable.{0,30}(hybrid|onsite|on-site|remote|office|commut|relocat)|(hybrid|on-?site).{0,30}(comfortable|okay|ok with)", label):
+        return hit("ARR-02", "Yes")
+    if "city" not in label and re.search(r"(state|province).{0,30}(live|reside|located|based)|(live|reside).{0,30}(state|province)", label):
+        return hit("LOC-03")
+    if re.search(r"expected (compensation|salary|ctc|pay)|(salary|compensation|ctc) expectation", label) and india is not False:
+        if "base" in label and "CMP-04" in by_id:
+            return ("3500000" if ftype == "number" else "INR 35 LPA", "CMP-04")
+        if re.search(r"total|ctc|overall", label) and "CMP-05" in by_id:
+            return ("4000000" if ftype == "number" else "INR 40 LPA", "CMP-05")
+        return ("4000000", "CMP-07") if ftype == "number" else ("INR 35-40 LPA", "CMP-06")
     if re.search(r"(privacy (notice|policy)|data privacy)|consent.{0,40}(collect|stor|process).{0,60}(response|demographic|data)", label):
         return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
     if re.search(r"confidential information", label):
@@ -186,7 +217,7 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
             return hit("AUT-01")
     if re.search(r"(require|need).{0,40}(visa|sponsorship|work permit)|(visa|sponsorship|work permit).{0,40}(require|need)", label):
         return None if india is None else hit("AUT-05" if india else "AUT-04")
-    if re.search(r"authori[sz]ed|legal(ly)? .{0,12}right|right to work|eligible to work", label) and "work" in label:
+    if re.search(r"authori[sz]ed|legal(ly)? .{0,12}(right|entitled)|right to work|eligible to work|entitled to work", label) and "work" in label:
         if _FOREIGN.search(label):
             return hit("AUT-03")
         if "india" in label:
@@ -195,11 +226,14 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
     m = re.search(r"\b(?:based|located|residing|living|reside|live)\s+(?:in|at|near)\s+([^?]+)", label)
     if m and not re.search(r"this (location|country|area)|your country", m.group(1)):
         return ("Yes", "LOC-01") if any(w in m.group(1) for w in _INDIA_WORDS) else ("No", "LOC-01")
-    if ftype not in ("select", "radio", "combobox") and re.search(r"how many (years|yrs)", label) and "experience" in label:
-        generic = not _TECH.search(label) and re.search(r"software|professional|engineering experience|overall|total", label)
+    if ftype not in ("select", "radio", "combobox") and not re.search(r"\d\s*\+?\s*(years|yrs)|at least|minimum|more than|over \d", label) \
+            and re.search(r"how many (years|yrs)|total years|^years of|years of (relevant |professional |hands-on )?experience", label) and "experience" in label:
+        generic = not _TECH.search(label) and re.search(r"software (engineering|development)|overall|professional experience|total experience|"
+                                                           r"total years of (work |professional )?experience\s*\??$", label)
         return (str(by_id["EXP-01"]["answer"]).strip(), "EXP-01") if (generic and "EXP-01" in by_id) else ("4", "EXP-04")
-    if re.search(r"^do you have (any |professional |hands-on |prior |relevant )*experience (with|in|using)", label) \
-            and not re.search(r"following|which of|select all", label):
+    if re.search(r"^(do you|have you).{0,12}(have |had )?(any |professional |hands-on |prior |relevant |direct )*experience "
+                 r"(with|in|using|operating|building|developing|designing|working|deploying|maintaining|managing systems)", label) \
+            and not re.search(r"following|which of|select all|leading|lead a|mentor|managing (a )?(team|people)|manager", label):
         return ("Yes", "EXP-04")
     if re.search(r"commutable|within .{0,20}distance|currently live in this location|do you live in", label):
         return None if india is None else (("Yes", "ARR-03") if india else ("No", "ARR-03"))
