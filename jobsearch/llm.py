@@ -92,6 +92,9 @@ def extract_json(text: str) -> Any:
     return json.loads(text)
 
 
+FAILURES = 0  # calls that ended without usable output (shown in the run summary)
+
+
 def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, max_tokens: int = 4000, retries: int = 2) -> T:
     """Ask for JSON matching a pydantic schema; re-ask with the validation error on failure."""
     system = GUARDRAIL + "\n\nJSON schema to follow:\n" + json.dumps(schema.model_json_schema())
@@ -109,6 +112,8 @@ def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, ma
             last_err = ""
             log.info("LLM call failed (attempt %d): %s", attempt + 1, type(exc).__name__)
             time.sleep(15 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))
+    global FAILURES
+    FAILURES += 1
     raise LLMError(f"LLM did not return valid {schema.__name__}")
 
 

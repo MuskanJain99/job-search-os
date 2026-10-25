@@ -47,3 +47,14 @@ def test_any_skill_is_four_years():
     assert ans("Do you have minimum 4 years of experience in Spark?") == "Yes"
     assert ans("Do you have a minimum of 5 years of experience in Cloud?") == "No"
     assert ans("Do you have 4+ years of experience designing and scaling ML pipelines?") == "Yes"
+
+
+def test_workato_style_questions():
+    assert ans("Are you based in Singapore?") == "No"
+    assert ans("Are you based in Hyderabad?") == "Yes"
+    assert ans("How many years of software engineering experience do you have?") == "4.3"
+    assert ans("How many years of experience do you have designing, building, and maintaining Go microservices in production?") == "4"
+    assert ans("How many years of experience do you have working with Postgres?") == "4"
+    assert ans("Do you have professional experience with Ruby on Rails?") == "Yes"
+    assert ans("Do you have experience with Git and CI/CD pipelines?") == "Yes"
+    assert ans("Do you have experience in any of the following?") is None

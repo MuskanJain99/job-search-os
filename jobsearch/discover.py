@@ -71,7 +71,8 @@ def _company(conn, name: str, p: Posting) -> str:
     row = conn.execute("select id, ats from companies where normalized_name=%s", (norm,)).fetchone()
     if row:
         if p.ats in ats.FEEDS and row["ats"] in (None, "unknown", "custom"):
-            conn.execute("update companies set ats=%s, ats_token=%s where id=%s", (p.ats, p.token, row["id"]))
+            if not conn.execute("select 1 from companies where ats=%s and ats_token=%s", (p.ats, p.token)).fetchone():
+                conn.execute("update companies set ats=%s, ats_token=%s where id=%s", (p.ats, p.token, row["id"]))
         return str(row["id"])
     known_ats = p.ats if p.ats in ats.FEEDS else "unknown"
     row = conn.execute(

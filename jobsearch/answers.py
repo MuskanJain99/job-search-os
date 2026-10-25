@@ -192,6 +192,15 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
         if "india" in label:
             return hit("AUT-01")
         return None if india is None else hit("AUT-01" if india else "AUT-03")
+    m = re.search(r"\b(?:based|located|residing|living|reside|live)\s+(?:in|at|near)\s+([^?]+)", label)
+    if m and not re.search(r"this (location|country|area)|your country", m.group(1)):
+        return ("Yes", "LOC-01") if any(w in m.group(1) for w in _INDIA_WORDS) else ("No", "LOC-01")
+    if ftype not in ("select", "radio", "combobox") and re.search(r"how many (years|yrs)", label) and "experience" in label:
+        generic = not _TECH.search(label) and re.search(r"software|professional|engineering experience|overall|total", label)
+        return (str(by_id["EXP-01"]["answer"]).strip(), "EXP-01") if (generic and "EXP-01" in by_id) else ("4", "EXP-04")
+    if re.search(r"^do you have (any |professional |hands-on |prior |relevant )*experience (with|in|using)", label) \
+            and not re.search(r"following|which of|select all", label):
+        return ("Yes", "EXP-04")
     if re.search(r"commutable|within .{0,20}distance|currently live in this location|do you live in", label):
         return None if india is None else (("Yes", "ARR-03") if india else ("No", "ARR-03"))
     if re.search(r"(client, partner|partner, or competitor|competitor)", label) and re.search(r"employ|work", label):

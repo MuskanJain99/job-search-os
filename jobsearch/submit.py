@@ -121,7 +121,15 @@ def run() -> None:
                     submit_one(r, ctx.new_page(), app, header, profile, evidence, Path(tmp))
                 except Exception as exc:
                     r.bump("errors")
-                    r.audit("submit.error", "applications", str(app["id"]), kind=type(exc).__name__, msg=str(exc)[:300])
+                    page_info = {}
+                    try:
+                        pg = ctx.pages[0]
+                        page_info = {"url": pg.url[:150], "forms": pg.locator("form").count(),
+                                     "buttons": [t.strip()[:30] for t in pg.locator("button, input[type=submit], a[role=button]").all_inner_texts()[:12]],
+                                     "captcha": _captcha(pg)}
+                    except Exception:
+                        pass
+                    r.audit("submit.error", "applications", str(app["id"]), kind=type(exc).__name__, msg=str(exc)[:300], page=page_info)
                     company_errors[app["company"] or ""] = company_errors.get(app["company"] or "", 0) + 1
                     tries = conn.execute("select count(*) n from audit_log where action='submit.error' and entity_id::text=%s", (str(app["id"]),)).fetchone()["n"]
                     if tries >= 2:  # failed twice: give up on this one, the queue moves on

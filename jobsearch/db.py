@@ -101,6 +101,10 @@ def run(workflow: str) -> Iterator[Run]:
         r.summary["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
         raise
     finally:
+        from . import llm as _llm
+
+        if _llm.FAILURES:
+            r.summary["llm_failures"] = _llm.FAILURES
         r.summary["dry_run"] = settings.dry_run
         conn.execute(
             "update runs set status=%s, finished_at=now(), summary=%s where id=%s",
