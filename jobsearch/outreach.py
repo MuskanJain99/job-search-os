@@ -18,7 +18,13 @@ log = get_logger("outreach")
 FIND_TASK = """From these public pages, list up to 3 people relevant to a referral for this job: the recruiter
 for the role, the hiring manager, or an engineer on the team (BITS Pilani / IBM alumni are a plus).
 Include a person only if the page shows their name and current role at the company. source_url must be the
-page where they appear. email: ONLY if that exact address is printed on the page; otherwise null."""
+page where they appear. email: ONLY if that exact address is printed on the page (a published recruiting mailbox such as
+talent@/recruiting@/careers@ counts for the recruiter); otherwise null."""
+
+DM_TASK = """Write a LinkedIn connection note from Muskan to the person below. HARD LIMIT 280 characters, plain text.
+Personal and specific: say why you are reaching out (you applied for the role), one concrete proof point from <evidence>,
+and a light ask (a quick pointer or referral). No flattery, no buzzwords, no emojis, no links. Address them by first name."""
+
 
 EMAIL_TASK = """Write a referral request email from Muskan (plain text, <= 120 words, subject <= 8 words).
 One line on who she is; one concrete reason this role/team fits; two proof points from <evidence> (cite
@@ -50,6 +56,8 @@ def run() -> None:
         budget = max(0, cfg["max_emails_per_day"] - (db.daily_usage(conn)["emails_today"] or 0))
         budget = check_replies_and_followups(r, cfg, budget)
         send_initials(r, budget)
+        draft_linkedin(r)
+        send_dm_digest(r)
 
 
 def find_contacts(r: db.Run) -> None:
@@ -58,7 +66,7 @@ def find_contacts(r: db.Run) -> None:
         """select a.id, j.title, c.id as company_id, c.name as company, c.domain from applications a join jobs j on j.id=a.job_id
            join companies c on c.id=j.company_id
            where a.status in ('SUBMITTED','SUBMITTED_CONFIRMED') and not exists (select 1 from contacts ct where ct.company_id=c.id)
-           order by a.submitted_at desc limit 5""").fetchall()
+           order by a.submitted_at desc limit 20""").fetchall()
     for a in apps:
         pages = []
         for q in (f'"{a["company"]}" recruiter "{a["title"]}" hiring', f'"{a["company"]}" engineering team blog OR talk "{a["title"].split()[0]}"'):
@@ -147,3 +155,52 @@ def check_replies_and_followups(r: db.Run, cfg, budget: int) -> int:
             budget -= 1
             r.bump("followups_sent")
     return budget
+
+
+def draft_linkedin(r: db.Run, limit: int = 15) -> None:
+    """Personalised LinkedIn connection notes for every contact with a profile link (one per contact and job)."""
+    conn = r.conn
+    rows = conn.execute(
+        """select ct.id as contact_id, ct.name, ct.role_title, ct.contact_type, a.id as app_id, j.title, c.name as company, j.jd_text
+           from contacts ct join companies c on c.id=ct.company_id
+           join jobs j on j.company_id=c.id join applications a on a.job_id=j.id
+           where ct.linkedin_url is not null and not ct.do_not_contact and a.status in ('SUBMITTED','SUBMITTED_CONFIRMED')
+             and not exists (select 1 from outreach o where o.contact_id=ct.id and o.channel='LINKEDIN')
+           order by a.submitted_at desc limit %s""", (limit,)).fetchall()
+    if not rows:
+        return
+    ev = "\n".join(f"{e['claim_id']}: {e['claim']}" for e in db.resume_evidence(conn)[:60])
+    from .models import Draft
+
+    for row in rows:
+        try:
+            note = ask_json(DM_TASK, f"<evidence>\n{ev}\n</evidence>\nTo: {row['name']} ({row['role_title']}, {row['contact_type']}) at {row['company']}\n"
+                            f"Role applied: {row['title']}\n" + untrusted((row["jd_text"] or "")[:2500], 2500), Draft, max_tokens=500).text.strip()
+        except Exception:  # noqa: BLE001 — one failed draft must not stop the others
+            r.bump("dm_draft_failed")
+            continue
+        conn.execute(
+            """insert into outreach (contact_id, application_id, channel, kind, step, subject, body, status)
+               values (%s,%s,'LINKEDIN','CONNECT_NOTE',0,%s,%s,'DRAFT')""",
+            (row["contact_id"], row["app_id"], f"{row['company']} — {row['title']}"[:200], note[:300]))
+        r.bump("dm_drafted")
+
+
+def send_dm_digest(r: db.Run) -> None:
+    """Email the ready-to-paste LinkedIn notes once (status DRAFT → APPROVED = handed to Muskan)."""
+    conn = r.conn
+    if not (settings.can_write_external() and settings.google_configured and settings.owner_email):
+        return
+    rows = conn.execute(
+        """select o.id, o.body, o.subject, ct.name, ct.role_title, ct.linkedin_url from outreach o join contacts ct on ct.id=o.contact_id
+           where o.channel='LINKEDIN' and o.status='DRAFT' order by o.created_at limit 40""").fetchall()
+    if not rows:
+        return
+    blocks = [f"{i}. {x['name']} — {x['role_title']} ({x['subject']})\n{x['linkedin_url']}\n\"{x['body']}\"" for i, x in enumerate(rows, 1)]
+    from .google_api import send_email
+
+    send_email(settings.owner_email, f"[Job Search] LinkedIn notes ready: {len(rows)} people", "Open each profile, press Connect, Add a note, and paste the note.\n\n"
+               + "\n\n".join(blocks))
+    for x in rows:
+        conn.execute("update outreach set status='APPROVED', approved_at=now() where id=%s", (x["id"],))
+    r.bump("dm_digest_sent", len(rows))
