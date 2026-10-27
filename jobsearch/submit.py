@@ -66,7 +66,12 @@ CONFIRM_TEXT = ("thank you for applying", "application has been submitted", "app
                 "successfully submitted")
 
 
-def _apply_url(ats_name: str, url: str) -> str:
+def _apply_url(ats_name: str, url: str, token: str | None = None) -> str:
+    if ats_name == "greenhouse" and token:
+        m = re.search(r"gh_jid=(\d+)", url) or re.search(r"greenhouse\.io/[^/]+/jobs/(\d+)", url)
+        if m and "greenhouse.io" not in url.split("/")[2]:
+            # Company-hosted career pages embed the form (0 forms found, Apply button times out): use the board itself.
+            return f"https://job-boards.greenhouse.io/{token}/jobs/{m.group(1)}"
     if ats_name == "lever" and not url.rstrip("/").endswith("/apply"):
         return url.rstrip("/") + "/apply"
     if ats_name == "ashby" and "/application" not in url:
@@ -92,7 +97,7 @@ def run() -> None:
         budget = max(0, cfg["max_applications_per_day"] - (usage["applications_today"] or 0))
         queue = conn.execute(
             """select a.id, a.channel, a.resume_version_id, a.cover_letter, j.url, j.title, j.jd_text, j.status as job_status,
-                      c.name as company, f.score
+                      c.name as company, c.ats_token, f.score
                from applications a join jobs j on j.id=a.job_id left join companies c on c.id=j.company_id
                left join lateral (select score from fit_scores where job_id=j.id order by created_at desc limit 1) f on true
                where a.status='READY' and a.next_action in ('submit','laptop_submit') and a.channel = any(%s)
@@ -146,7 +151,7 @@ def _skip(r: db.Run, app_id: str, why: str) -> None:
 def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp: Path) -> None:
     conn, app_id = r.conn, str(app["id"])
     pdf = resume_pdf.resume_for(conn, app, header, tmp / app_id)
-    url = _apply_url(app["channel"], app["url"])
+    url = _apply_url(app["channel"], app["url"], app.get("ats_token"))
     resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2500)
     body = page.inner_text("body").lower()[:20000]

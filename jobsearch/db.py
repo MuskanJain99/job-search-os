@@ -105,6 +105,7 @@ def run(workflow: str) -> Iterator[Run]:
 
         if _llm.FAILURES:
             r.summary["llm_failures"] = _llm.FAILURES
+            r.summary["llm_last_error"] = _llm.LAST_ERROR
         r.summary["dry_run"] = settings.dry_run
         conn.execute(
             "update runs set status=%s, finished_at=now(), summary=%s where id=%s",

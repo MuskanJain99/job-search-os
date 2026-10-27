@@ -142,6 +142,90 @@ def in_india(job_location: str) -> bool | None:
     return any(w in loc for w in _INDIA_WORDS)
 
 
+_COUNTRIES_NO = re.compile(r"brazil|colombia|mexico|latin america|argentina|chile|peru|canada|united states|\bus\b|\buk\b|united kingdom|"
+                           r"singapore|uae|emirates|germany|ireland|europe|poland|netherlands|france|spain|australia|japan")
+
+
+def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[str, str] | None:
+    """Questions whose answer is a stored fact or a fixed policy. Order matters: specific before generic."""
+    def v(pid: str) -> str | None:
+        return str(by_id[pid]["answer"]).strip() if pid in by_id else None
+
+    def hit(pid: str, text: str | None = None):
+        val = text if text is not None else v(pid)
+        return (val, pid) if val else None
+
+    # --- EEO / self-identification (stored by her; used only because the form asks) ---
+    if re.search(r"hispanic|latino|latinx", label):
+        return hit("EEO-04")
+    if re.search(r"veteran|military service|armed forces", label):
+        return hit("MIL-01", "No")
+    if re.search(r"sexual orientation", label):
+        return hit("EEO-05")
+    if re.search(r"disabilit", label) and not re.search(r"accommodat", label):
+        return hit("MIL-02")
+    if re.search(r"\brace\b|ethnic", label) and not re.search(r"hispanic|latino", label):
+        return hit("EEO-02" if re.search(r"\brace\b", label) else "EEO-03")
+    if re.search(r"gender identity|^gender|^sex\b|identify as (a )?(man|woman|male|female)", label) and ftype != "textarea" \
+            and not re.search(r"transgender", label):
+        return hit("EEO-01")
+    if re.search(r"^religio", label):
+        return hit("EEO-06")
+    if re.search(r"marital", label):
+        return hit("EEO-07")
+    if re.search(r"pronoun", label):
+        return hit("ID-05")
+    # --- identity / contact ---
+    if re.search(r"preferred last name|^last name|^family name|^surname", label):
+        return hit("ID-02")
+    if re.search(r"preferred (first )?name", label):
+        return hit("ID-04")
+    if re.search(r"how.{0,25}(communicate|contact|reach)|preferred (contact|communication)", label):
+        return hit("CON-06")
+    if re.search(r"^(what )?(is your )?(gpa|cgpa|grade point)|\bgpa\b|\bcgpa\b", label):
+        return hit("EXP-10", "7.2") if "EXP-10" in by_id else None
+    if re.search(r"english.{0,30}(level|proficien|fluen)|(level|proficien|fluen).{0,30}english", label):
+        return ("Fluent", "CON-08")
+    # --- employment history at the hiring company ---
+    if (re.search(r"(ever|previously|before|currently|now|at any other time|at any time).{0,40}(work|employ|contract|consult|interview|apply|appli)", label)
+            or re.search(r"(work|employ|interview)\w*.{0,30}\b(for|at|with)\b.{0,50}(previously|before|ever|any other time)", label)) \
+            and re.search(r"\b(for|at|with|by)\b", label) and not re.search(r"experience|skill|years", label):
+        return ("No", "APQ-03")
+    if re.search(r"(us|u\.s\.|united states|federal|state|local|foreign).{0,25}government.{0,40}(employ|entity|official|work)|"
+                 r"government.{0,30}(entity|agency).{0,40}(employ|work)", label):
+        return hit("SEC-03")
+    if re.search(r"citizen.{0,40}(cuba|iran|north korea|syria)|(cuba|iran|north korea|syria).{0,40}citizen", label):
+        return ("No", "ID-09")
+    if re.search(r"tax resident|resident.{0,15}for tax", label):
+        return ("No", "LOC-01")
+    if re.search(r"passport", label) and re.search(r"countr|issu", label):
+        return ("India", "REL-09")
+    # --- work arrangement ---
+    if re.search(r"(office|on-?site|in[- ]person|hybrid|commut).{0,80}(days?|times?|schedule|week|requirement|%|percent|willing|able|confirm)|"
+                 r"(willing|able|open|comfortable|confirm).{0,60}(office|on-?site|in[- ]person|hybrid|relocat|commut)", label) \
+            and not re.search(r"visa|sponsor", label):
+        return hit("ARR-02", "Yes")
+    if re.search(r"from where do you intend to work|where.{0,20}(intend|plan|expect).{0,15}work|preferred (work )?locations?|"
+                 r"available to work in|cities.{0,30}(work|available)", label):
+        return hit("ARR-01", "Anywhere") if ftype != "select" else None
+    if re.search(r"(accept|comfortable|ok|okay|agree).{0,30}(salary|pay|compensation) range|(salary|pay|compensation) range.{0,30}(accept|comfortable|ok)", label):
+        return ("Yes", "CMP-06")
+    # --- acknowledgements ---
+    if re.search(r"ai policy|ai usage|use of ai|candidate privacy|privacy statement|privacy notice|pay (range )?transparency|processing of (your )?personal|"
+                 r"please double.?check|applicant privacy|data protection|recruitment privacy|i (have )?(read|reviewed)", label):
+        return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
+    if re.search(r"assistance.{0,40}(llm|ai tool)|accommodation.{0,40}interview", label):
+        return ("No", "CON-10")
+    # --- work authorisation phrased generically ---
+    if re.search(r"authorization to work in the country where you live|authori[sz]ation.{0,30}(country|where) you (live|reside)", label):
+        return hit("AUT-01", "Yes")
+    if re.search(r"(sponsor|commence).{0,40}immigration case|immigration case", label):
+        return None if india is None else (hit("AUT-05") if india else hit("AUT-04"))
+    if re.search(r"(bachelor|master|degree).{0,30}(computer science|engineering|related|stem)|(computer science|engineering).{0,30}degree", label):
+        return ("Yes", "EXP-07")
+    return None
+
+
 def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_years: float) -> tuple[str, str] | None:
     """Standing answers that depend on the question wording and the job's country. (answer, profile id) or None."""
     def v(pid: str) -> str | None:
@@ -151,8 +235,12 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
         val = text if text is not None else v(pid)
         return (val, pid) if val else None
 
-    if re.search(r"how did you (hear|learn)|where did you (hear|find|see)", label):
+    if re.search(r"how did you (first )?(hear|learn|find)|where did you (first )?(hear|find|see|learn)|where have you (first )?(hear|learn)|"
+                 r"how (have you )?(heard|learned)|source of (application|referral)", label):
         return hit("APQ-02", "LinkedIn") if "APQ-02" in by_id else None
+    r = _standing(label, ftype, by_id, india)
+    if r:
+        return r
     if re.search(r"current( \(or most recent\))? (company|employer|firm)|most recent (company|employer)|current firm|firm you.?re part of|"
                  r"name of your current", label):
         return hit("EXP-06")

@@ -92,6 +92,7 @@ def extract_json(text: str) -> Any:
     return json.loads(text)
 
 
+LAST_ERROR = ""  # most recent failure reason, shown in the run summary
 FAILURES = 0  # calls that ended without usable output (shown in the run summary)
 
 
@@ -107,9 +108,12 @@ def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, ma
             return schema.model_validate(extract_json(raw))
         except (ValidationError, json.JSONDecodeError, ValueError) as exc:
             last_err = str(exc)[:800]
+            global LAST_ERROR
+            LAST_ERROR = f"invalid output: {last_err[:200]}"
             log.info("LLM output invalid (attempt %d): %s", attempt + 1, type(exc).__name__)
         except Exception as exc:  # network / rate limit
             last_err = ""
+            LAST_ERROR = f"{type(exc).__name__}: {str(exc)[:200]}"
             log.info("LLM call failed (attempt %d): %s", attempt + 1, type(exc).__name__)
             time.sleep(15 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))
     global FAILURES

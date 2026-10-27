@@ -6,6 +6,10 @@ PROFILE = [{"id": i, "answer_type": "VALUE", "field": f, "answer": a, "applies_w
     ("AUT-04", "c", "Yes"), ("AUT-05", "d", "No"), ("LOC-02", "city", "Hyderabad, Telangana"), ("LOC-03", "st", "Telangana"),
     ("LOC-04", "zip", "500055"), ("CNS-01", "cns", "Yes / Yes / Yes"), ("CNS-03", "ai", "Yes / Yes"), ("SEC-03", "gov", "No"), ("COI-05", "rel", "No"), ("EXP-07", "deg", "Master"), ("ARR-02", "arr", "Yes / Yes / Yes"), ("APQ-07", "oss", "None"), ("CMP-06", "c6", "x"), ("CMP-07", "c7", "x"), ("LOC-01", "ctry", "India"), ("COI-02", "nc", "No"), ("COI-03", "comp", "No"),
     ("COI-04", "conf", "Yes"), ("ID-04", "pf", "Muskan"), ("ID-06", "dob", "x"), ("EEO-01", "sex", "Female"),
+    ("EEO-02", "race", "Asian"), ("EEO-03", "eth", "Indian"), ("EEO-04", "his", "No"), ("EEO-05", "so", "Heterosexual"),
+    ("MIL-01", "vet", "No / Not a veteran"), ("MIL-02", "dis", "No"), ("EXP-10", "gpa", "7.2 (10-point scale)"),
+    ("ID-02", "ln", "Nahata"), ("CON-06", "cm", "Email"), ("CON-08", "lang", "English"), ("ARR-01", "loc", "Anywhere"),
+    ("CON-10", "acc", "No"), ("REL-09", "pp", "Yes / India"),
     ("USR-AAAAAA", "What was your undergraduate GPA?", "7.2")]]
 
 
@@ -92,3 +96,30 @@ def test_second_batch_variants():
         assert got == want, (label, got, want)
     assert ans("What is your expected compensation?") == "INR 35-40 LPA"
     assert ans("Do you have experience leading a technical roadmap?") is None
+
+
+def test_third_digest_batch():
+    cases = {
+        "Are you Hispanic/Latino?*": "No", "Veteran Status*": "No", "Sexual orientation": "Heterosexual",
+        "Do you have a disability?": "No", "Race": "Asian", "Ethnicity": "Indian", "Gender identity": "Female",
+        "Preferred Last Name": "Nahata", "How should we communicate with you?": "Email",
+        "Have you ever worked for Figma before, as an employee or a contractor/consultant?": "No",
+        "Have you previously worked at Samsara?": "No", "Have you ever interviewed at Anthropic before?": "No",
+        "Have you worked for Carta at any other time previously?": "No",
+        "Where did you first hear about this role?": "LinkedIn", "Where have you learned about Samsara? Select all that apply.": "LinkedIn",
+        "Please double-check all the information provided above. Ensuring accuracy is crucial.": "Yes",
+        "AI Policy for Application": "Yes", "Processing of Personal Data": "Yes",
+        "Are you open to working in-person in one of our offices 25% of the time?": "Yes",
+        "This role requires working from the office three days per week. Would you be able to meet this requirement?": "Yes",
+        "From where do you intend to work?": "Anywhere",
+        "Do you accept the listed salary range for this position?": "Yes",
+        "Will you need any assistance accessing an LLM tool during your interview?": "No",
+        "Your authorization to work in the country where you live. Please choose the option that describes your work authorization.": "Yes",
+        "Are you a citizen of Cuba, Iran, North Korea or Syria?": "No",
+        "Do you currently work for a US government entity?": "No",
+    }
+    for label, want in cases.items():
+        assert ans(label) == want, (label, ans(label), want)
+    assert ans("Will you now or in the future require Samsara to commence (sponsor) an immigration case in order to employ you?", "Bengaluru") == "No"
+    assert ans("Will you now or in the future require Samsara to commence (sponsor) an immigration case in order to employ you?", "London") == "Yes"
+    assert ans("Do you identify as transgender?") is None
