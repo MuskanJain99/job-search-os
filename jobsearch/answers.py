@@ -216,6 +216,9 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
                  r"(consent|authori[sz]e|agree|permission).{0,60}(background|criminal|credit|verification|screening)", label) \
             and not re.search(r"convict|arrest|charged|pleaded|have you (ever )?(been|had)|do you have a|social security|ssn", label):
         return hit("BGC-01", "Yes")
+    if re.search(r"convict|criminal (record|offen[cs]e|history)|pleaded|felony|misdemeanou?r|arrested|pending charges|charged with a crime", label) \
+            and "BGC-03" in by_id:
+        return hit("BGC-03", "No")
     # --- consent / terms / talent community: she agrees unless it is extreme ---
     if re.search(r"future (opportunit|role|position|job)|talent (community|network|pool)|keep (my|your) (data|information|details)|"
                  r"retain|store (my|your) (data|information)|stay in touch|consider me for", label) and not re.search(r"marketing|newsletter|promotional", label):
