@@ -155,6 +155,8 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
         val = text if text is not None else v(pid)
         return (val, pid) if val else None
 
+    if re.search(r"marketing|newsletter|promotional|text message|\bsms\b", label):
+        return ("No", "CNS-02")
     # --- EEO / self-identification (stored by her; used only because the form asks) ---
     if re.search(r"hispanic|latino|latinx", label):
         return hit("EEO-04")
@@ -210,6 +212,15 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
         return hit("ARR-01", "Anywhere") if ftype != "select" else None
     if re.search(r"(accept|comfortable|ok|okay|agree).{0,30}(salary|pay|compensation) range|(salary|pay|compensation) range.{0,30}(accept|comfortable|ok)", label):
         return ("Yes", "CMP-06")
+    # --- consent / terms / talent community: she agrees unless it is extreme ---
+    if re.search(r"future (opportunit|role|position|job)|talent (community|network|pool)|keep (my|your) (data|information|details)|"
+                 r"retain|store (my|your) (data|information)|stay in touch|consider me for", label) and not re.search(r"marketing|newsletter|promotional", label):
+        return hit("CNS-05", "Yes")
+    if ftype == "checkbox" and re.search(r"terms|conditions|agree|consent|acknowledg|privacy|policy|accept|certify|declar|authori[sz]e|"
+                                         r"data (processing|protection|transfer)|gdpr|ccpa", label) \
+            and not re.search(r"marketing|newsletter|promotional|sms|text message|biometric|social security|criminal|credit (check|report)|"
+                              r"fingerprint|medical|genetic", label):
+        return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
     # --- acknowledgements ---
     if re.search(r"ai policy|ai usage|use of ai|candidate privacy|privacy statement|privacy notice|pay (range )?transparency|processing of (your )?personal|"
                  r"please double.?check|applicant privacy|data protection|recruitment privacy|i (have )?(read|reviewed)", label):

@@ -123,3 +123,14 @@ def test_third_digest_batch():
     assert ans("Will you now or in the future require Samsara to commence (sponsor) an immigration case in order to employ you?", "Bengaluru") == "No"
     assert ans("Will you now or in the future require Samsara to commence (sponsor) an immigration case in order to employ you?", "London") == "Yes"
     assert ans("Do you identify as transgender?") is None
+
+
+def test_consents_and_codes():
+    assert ans("I agree to the Terms and Conditions", t="checkbox") == "Yes"
+    assert ans("I consent to the processing of my personal data", t="checkbox") == "Yes"
+    assert ans("Keep my information on file for future opportunities", t="checkbox") == "Yes"
+    assert ans("Join our talent community") is None or ans("Join our talent community") == "Yes"
+    assert ans("I agree to receive marketing emails", t="checkbox") == "No"
+    from jobsearch.otp import extract_code
+    assert extract_code("Your security code is:\n\nA1b2C3d4\n\nEnter it") == "A1b2C3d4"
+    assert extract_code("Your verification code is 482913") == "482913"

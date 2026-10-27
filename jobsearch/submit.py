@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import re
 import tempfile
+import time
 from pathlib import Path
 
-from . import answering, db, ranges, resume_pdf
+from . import answering, db, otp, ranges, resume_pdf
 from .config import settings
 from .log import get_logger
 from .sources.aggregators import CLOUD_TRY
@@ -58,8 +59,7 @@ FIELDS_JS = r"""
 }
 """
 
-STOP_TEXT = ("verify you are human", "i'm not a robot", "captcha", "security code", "verification code",
-             "enter the code", "create an account", "create account", "sign in to apply", "log in to apply",
+STOP_TEXT = ("verify you are human", "i'm not a robot", "captcha", "create an account", "create account", "sign in to apply", "log in to apply",
              "assessment", "coding challenge")
 CONFIRM_TEXT = ("thank you for applying", "application has been submitted", "application submitted",
                 "we have received your application", "thanks for applying", "application received",
@@ -206,13 +206,28 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
         _skip(r, app_id, "a form field could not be filled")
         r.bump("skip_fill_failed")
         return
+    started_ms = int(time.time() * 1000)
     page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click()
     page.wait_for_timeout(6000)
     after = page.inner_text("body").lower()[:20000]
-    if any(t in after for t in ("verification code", "security code", "enter the code")) or _captcha(page):
-        _skip(r, app_id, "verification code/CAPTCHA after submit")
-        r.bump("skip_verification")
+    if _captcha(page):
+        _skip(r, app_id, "CAPTCHA after submit")
+        r.bump("skip_captcha")
         return
+    if any(t in after for t in ("verification code", "security code", "enter the code")):
+        code = otp.fetch_code(app["company"] or "", started_ms)
+        if not code or not otp.enter_code(page, code):
+            _skip(r, app_id, "verification code could not be read from email")
+            r.bump("skip_verification")
+            return
+        r.audit("submit.otp", "applications", app_id)
+        page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click()
+        page.wait_for_timeout(6000)
+        after = page.inner_text("body").lower()[:20000]
+        if any(t in after for t in ("verification code", "security code", "enter the code")) or _captcha(page):
+            _skip(r, app_id, "verification code rejected")
+            r.bump("skip_verification")
+            return
     confirmed = any(t in after for t in CONFIRM_TEXT)
     db.set_application_status(r, app_id, "SUBMITTED_CONFIRMED" if confirmed else "SUBMITTED", submitted_at=_now(),
                               confirmation_url=page.url, confirmation_evidence=("confirmation page text" if confirmed else None),
@@ -250,6 +265,8 @@ def fill(page, f: dict, value: str, pdf: Path, cover: str | None) -> None:
             idx = ranges.pick(opts, years)
         else:
             want = value.strip().lower()
+            if t == "checkbox" and want in ("no", "false", "decline", "n/a"):
+                return  # leave unticked (e.g. marketing opt-ins)
             idx = next((i for i, o in enumerate(opts) if o.strip().lower() == want), None)
             if idx is None and t == "checkbox" and want in ("yes", "true", "i agree", "agree"):
                 idx = 0
