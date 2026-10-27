@@ -8,7 +8,7 @@ PROFILE = [{"id": i, "answer_type": "VALUE", "field": f, "answer": a, "applies_w
     ("COI-04", "conf", "Yes"), ("ID-04", "pf", "Muskan"), ("ID-06", "dob", "x"), ("EEO-01", "sex", "Female"),
     ("EEO-02", "race", "Asian"), ("EEO-03", "eth", "Indian"), ("EEO-04", "his", "No"), ("EEO-05", "so", "Heterosexual"),
     ("MIL-01", "vet", "No / Not a veteran"), ("MIL-02", "dis", "No"), ("EXP-10", "gpa", "7.2 (10-point scale)"),
-    ("ID-02", "ln", "Nahata"), ("BGC-03", "crim", "No"), ("CON-06", "cm", "Email"), ("CON-08", "lang", "English"), ("ARR-01", "loc", "Anywhere"),
+    ("ID-02", "ln", "Nahata"), ("EEO-09", "tg", "No"), ("EEO-10", "nd", "No"), ("BGC-03", "crim", "No"), ("CON-06", "cm", "Email"), ("CON-08", "lang", "English"), ("ARR-01", "loc", "Anywhere"),
     ("CON-10", "acc", "No"), ("REL-09", "pp", "Yes / India"),
     ("USR-AAAAAA", "What was your undergraduate GPA?", "7.2")]]
 
@@ -122,7 +122,8 @@ def test_third_digest_batch():
         assert ans(label) == want, (label, ans(label), want)
     assert ans("Will you now or in the future require Samsara to commence (sponsor) an immigration case in order to employ you?", "Bengaluru") == "No"
     assert ans("Will you now or in the future require Samsara to commence (sponsor) an immigration case in order to employ you?", "London") == "Yes"
-    assert ans("Do you identify as transgender?") is None
+    assert ans("Do you identify as transgender?") == "No"
+    assert ans("Do you identify as neurodivergent?") == "No"
 
 
 def test_consents_and_codes():

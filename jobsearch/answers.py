@@ -162,6 +162,10 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
         return hit("EEO-04")
     if re.search(r"veteran|military service|armed forces", label):
         return hit("MIL-01", "No")
+    if re.search(r"transgender|trans experience|gender (is )?(different|differ)|differs? from (the )?sex", label):
+        return hit("EEO-09", "No")
+    if re.search(r"neurodiver|neuro-diver", label):
+        return hit("EEO-10", "No")
     if re.search(r"sexual orientation", label):
         return hit("EEO-05")
     if re.search(r"disabilit", label) and not re.search(r"accommodat", label):
