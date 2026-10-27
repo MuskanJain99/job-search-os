@@ -232,6 +232,8 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
             and not re.search(r"marketing|newsletter|promotional|sms|text message|biometric|social security|"
                               r"fingerprint|medical|genetic", label):
         return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
+    if re.search(r"arbitrat", label):  # standing instruction: agree to ordinary T&C
+        return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
     # --- acknowledgements ---
     if re.search(r"ai policy|ai usage|use of ai|candidate privacy|privacy statement|privacy notice|pay (range )?transparency|processing of (your )?personal|"
                  r"please double.?check|applicant privacy|data protection|recruitment privacy|i (have )?(read|reviewed)", label):
@@ -320,6 +322,9 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
         return hit("LOC-02", (v("LOC-02") or "").split(",")[0] or None)
     if re.search(r"^current location|^location$", label):
         return hit("LOC-02")
+    if re.search(r"country.{0,15}(are you|do you).{0,10}(based|located|live|reside)|(which|what) country.{0,25}(based|located|live|reside)|"
+                 r"current country of residence|^country of residence|^country$", label) and not re.search(r"visa|sponsor|permit|authori|eligible|right to work", label):
+        return hit("LOC-01", "India")
     if re.search(r"country of residence|current country", label):
         if re.search(r"visa|sponsor|permit", label):
             return hit("AUT-05")
@@ -366,7 +371,8 @@ _OPEN_ENDED = re.compile(r"why |what (interests|excites|motivates|attracts)|inte
                          r"passion|motivat|proud|cover letter|anything else|additional information|share with us|in your own words")
 DRAFT_TASK = """Write the answer to this job-application question as Muskan, in first person, plain text, 3-5 sentences (max 110 words).
 Use ONLY facts from <evidence> (her real work) and the job description for context; no invented employers, numbers, tools or
-achievements. Be specific, warm and direct; no buzzwords, no markdown, no greeting or sign-off."""
+achievements. Be specific, warm and direct; no buzzwords, no markdown, no greeting or sign-off.
+If the question asks about experience the evidence does not support, say so honestly and describe the closest real work instead."""
 
 
 def draft_answer(label: str, company: str, title: str, evidence: list[dict], jd: str) -> str | None:
@@ -416,7 +422,14 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
                            head + untrusted(json.dumps(chunk, ensure_ascii=False), 9000), FormAnswers, fast=False, max_tokens=4000)
             proposed.update({a.field_id: a for a in out.answers})
         except LLMError:
-            pass  # these fields stay unknown: required ones become questions, optional ones are left empty
+            # A long chunk may have tripped the model: retry the fields one at a time before giving up on them.
+            for f1 in chunk if len(chunk) > 1 else []:
+                try:
+                    out = ask_json(TASK.format(today=date.today().isoformat()),
+                                   head + untrusted(json.dumps([f1], ensure_ascii=False), 3000), FormAnswers, fast=False, max_tokens=1500)
+                    proposed.update({a.field_id: a for a in out.answers})
+                except LLMError:
+                    pass  # stays unknown: required ones become questions, optional ones are left empty
     values: dict[str, str] = {}
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []
@@ -436,8 +449,8 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
             if required:
                 blockers.append(("NEVER_ANSWER", label))
             continue
-        if (a is None or a.answer in (None, "")) and f.get("type") in ("textarea", "text") and _OPEN_ENDED.search(low) \
-                and not any(w in low for w in HARD_STOP_WORDS):
+        if (a is None or a.answer in (None, "")) and (f.get("type") == "textarea" or (f.get("type") == "text" and (
+                _OPEN_ENDED.search(low) or len(low) > 40))) and not any(w in low for w in HARD_STOP_WORDS):
             text = draft_answer(label, company, job_title, evidence, jd)
             if text:
                 values[fid] = text

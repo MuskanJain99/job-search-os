@@ -141,3 +141,11 @@ def test_background_check_consent():
     assert ans("I consent to a criminal background check", t="checkbox") == "Yes"
     assert ans("Do you authorize us to conduct a background and employment verification?") == "Yes"
     assert ans("Have you ever been convicted of a crime?") == "No"
+
+
+def test_country_and_arbitration():
+    assert ans("Current country of residence*") == "India"
+    assert ans("Current country of residence* Select...", t="select") == "India"
+    assert ans("What country are you based in?") == "India"
+    assert ans("Agreement to Arbitrate", t="checkbox") == "Yes"
+    assert ans("Please read the arbitration agreement below", t="checkbox") == "Yes"
