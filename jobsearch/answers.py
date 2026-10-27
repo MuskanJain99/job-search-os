@@ -212,13 +212,17 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
         return hit("ARR-01", "Anywhere") if ftype != "select" else None
     if re.search(r"(accept|comfortable|ok|okay|agree).{0,30}(salary|pay|compensation) range|(salary|pay|compensation) range.{0,30}(accept|comfortable|ok)", label):
         return ("Yes", "CMP-06")
+    if re.search(r"(background|criminal|credit|reference|employment|education)( history| record)? (check|verification|screening|investigation)|"
+                 r"(consent|authori[sz]e|agree|permission).{0,60}(background|criminal|credit|verification|screening)", label) \
+            and not re.search(r"convict|arrest|charged|pleaded|have you (ever )?(been|had)|do you have a|social security|ssn", label):
+        return hit("BGC-01", "Yes")
     # --- consent / terms / talent community: she agrees unless it is extreme ---
     if re.search(r"future (opportunit|role|position|job)|talent (community|network|pool)|keep (my|your) (data|information|details)|"
                  r"retain|store (my|your) (data|information)|stay in touch|consider me for", label) and not re.search(r"marketing|newsletter|promotional", label):
         return hit("CNS-05", "Yes")
     if ftype == "checkbox" and re.search(r"terms|conditions|agree|consent|acknowledg|privacy|policy|accept|certify|declar|authori[sz]e|"
                                          r"data (processing|protection|transfer)|gdpr|ccpa", label) \
-            and not re.search(r"marketing|newsletter|promotional|sms|text message|biometric|social security|criminal|credit (check|report)|"
+            and not re.search(r"marketing|newsletter|promotional|sms|text message|biometric|social security|"
                               r"fingerprint|medical|genetic", label):
         return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
     # --- acknowledgements ---

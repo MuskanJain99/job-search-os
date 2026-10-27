@@ -134,3 +134,9 @@ def test_consents_and_codes():
     from jobsearch.otp import extract_code
     assert extract_code("Your security code is:\n\nA1b2C3d4\n\nEnter it") == "A1b2C3d4"
     assert extract_code("Your verification code is 482913") == "482913"
+
+
+def test_background_check_consent():
+    assert ans("I consent to a criminal background check", t="checkbox") == "Yes"
+    assert ans("Do you authorize us to conduct a background and employment verification?") == "Yes"
+    assert ans("Have you ever been convicted of a crime?") is None
