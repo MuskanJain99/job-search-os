@@ -115,7 +115,7 @@ def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, ma
             last_err = ""
             LAST_ERROR = f"{type(exc).__name__}: {str(exc)[:200]}"
             log.info("LLM call failed (attempt %d): %s", attempt + 1, type(exc).__name__)
-            time.sleep(15 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))
+            time.sleep(45 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))  # free tiers reset per minute
     global FAILURES
     FAILURES += 1
     raise LLMError(f"LLM did not return valid {schema.__name__}")

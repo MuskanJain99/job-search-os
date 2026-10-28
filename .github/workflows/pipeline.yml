@@ -37,7 +37,7 @@ jobs:
       LLM_MODEL_FAST: ${{ vars.LLM_MODEL_FAST }}
       LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/' }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      LLM_MIN_INTERVAL_S: ${{ vars.LLM_MIN_INTERVAL_S || '4' }}
+      LLM_MIN_INTERVAL_S: ${{ vars.LLM_MIN_INTERVAL_S || '7' }}
       FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
       JSEARCH_API_KEY: ${{ secrets.JSEARCH_API_KEY }}
       ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}

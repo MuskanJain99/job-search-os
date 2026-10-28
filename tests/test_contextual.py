@@ -149,3 +149,9 @@ def test_country_and_arbitration():
     assert ans("What country are you based in?") == "India"
     assert ans("Agreement to Arbitrate", t="checkbox") == "Yes"
     assert ans("Please read the arbitration agreement below", t="checkbox") == "Yes"
+
+
+def test_travel_always_yes():
+    assert ans("Are you willing and able to travel to customer sites approximately once every 4-8 weeks, as business needs require?") == "Yes"
+    assert ans("Are you able to travel up to 25% of the time?") == "Yes"
+    assert ans("What percentage of travel are you comfortable with?") == "100%"

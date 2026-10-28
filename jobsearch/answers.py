@@ -206,6 +206,10 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
         return ("No", "LOC-01")
     if re.search(r"passport", label) and re.search(r"countr|issu", label):
         return ("India", "REL-09")
+    if re.search(r"travel", label) and not re.search(r"visa|sponsor|relocat|history|restriction|ban", label):
+        if re.search(r"what (percent|percentage|amount|level|%)|how much|how often|percentage of", label) and ftype != "select":
+            return ("100%", "REL-08")
+        return ("Yes", "REL-08")
     # --- work arrangement ---
     if re.search(r"(office|on-?site|in[- ]person|hybrid|commut).{0,80}(days?|times?|schedule|week|requirement|%|percent|willing|able|confirm)|"
                  r"(willing|able|open|comfortable|confirm).{0,60}(office|on-?site|in[- ]person|hybrid|relocat|commut)", label) \
