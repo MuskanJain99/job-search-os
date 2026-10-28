@@ -10,12 +10,13 @@ filled and screenshotted, and the application stays READY.
 
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 import time
 from pathlib import Path
 
-from . import answering, db, otp, ranges, resume_pdf
+from . import answering, answers, db, otp, ranges, resume_pdf
 from .config import settings
 from .log import get_logger
 from .sources.aggregators import CLOUD_TRY
@@ -116,7 +117,11 @@ def run() -> None:
         with sync_playwright() as pw, tempfile.TemporaryDirectory() as tmp:
             browser = pw.chromium.launch()
             company_errors: dict[str, int] = {}
+            stop_at = time.monotonic() + float(os.environ.get("SUBMIT_TIME_BUDGET_S", "2400"))  # finish cleanly before the 50-min job limit
             for app in queue:
+                if time.monotonic() > stop_at:
+                    r.summary["time_budget_hit"] = True
+                    break
                 if company_errors.get(app["company"] or "", 0) >= 2:  # this employer's form keeps failing: others get a turn
                     _skip(r, str(app["id"]), "this employer's form keeps failing")
                     r.bump("deferred_skipped")
@@ -124,6 +129,8 @@ def run() -> None:
                 ctx = browser.new_context(locale="en-IN", timezone_id="Asia/Kolkata", viewport={"width": 1366, "height": 900})
                 try:
                     submit_one(r, ctx.new_page(), app, header, profile, evidence, Path(tmp))
+                except answers.Deferred:
+                    r.bump("deferred_llm")  # model rate-limited: stays READY for the next run, nobody is asked
                 except Exception as exc:
                     r.bump("errors")
                     page_info = {}
@@ -207,7 +214,7 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
         r.bump("skip_fill_failed")
         return
     started_ms = int(time.time() * 1000)
-    page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click()
+    page.get_by_role("button", name="Submit").or_(page.locator("button[type=submit], input[type=submit]")).first.click(timeout=15000)
     page.wait_for_timeout(6000)
     after = page.inner_text("body").lower()[:20000]
     if _captcha(page):

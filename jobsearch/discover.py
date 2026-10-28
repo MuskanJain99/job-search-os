@@ -7,7 +7,7 @@ import time
 
 from psycopg.types.json import Jsonb
 
-from . import answering, db, scoring, tailor, targeting
+from . import answering, answers, db, scoring, tailor, targeting
 from .config import settings
 from .log import get_logger
 from .sources import aggregators, ats, search
@@ -233,8 +233,14 @@ def prepare(r: db.Run, job_id: str, p: Posting, company: str, score: int, eviden
         fields = [_gh_field(q) for q in ats.greenhouse_questions(p.token, p.job_id)]
         fields = [f for f in fields if f]
         if fields:
-            res = answering.resolve_with_owner(r, app_id, fields, profile, evidence, p.title, company, jd=p.description)
-            if res is None:
+            try:
+                res = answering.resolve_with_owner(r, app_id, fields, profile, evidence, p.title, company, jd=p.description)
+            except answers.Deferred:
+                res = False  # model rate-limited: the submit stage will answer this form later
+                r.bump("deferred_llm")
+            if res is False:
+                pass
+            elif res is None:
                 stopped = True  # alerted, waited, recorded — move on; a late reply re-queues it
             else:
                 for a in res.provenance:

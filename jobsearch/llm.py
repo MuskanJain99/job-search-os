@@ -92,12 +92,17 @@ def extract_json(text: str) -> Any:
     return json.loads(text)
 
 
+UNAVAILABLE = False  # set after repeated rate-limit failures: stop calling for the rest of this run
+_RL_STREAK = 0
 LAST_ERROR = ""  # most recent failure reason, shown in the run summary
 FAILURES = 0  # calls that ended without usable output (shown in the run summary)
 
 
 def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, max_tokens: int = 4000, retries: int = 2) -> T:
     """Ask for JSON matching a pydantic schema; re-ask with the validation error on failure."""
+    global LAST_ERROR, FAILURES, UNAVAILABLE, _RL_STREAK
+    if UNAVAILABLE:
+        raise LLMError("LLM unavailable for this run (rate limited)")
     system = GUARDRAIL + "\n\nJSON schema to follow:\n" + json.dumps(schema.model_json_schema())
     user = task + "\n\n" + payload
     last_err = ""
@@ -105,20 +110,32 @@ def ask_json(task: str, payload: str, schema: type[T], *, fast: bool = False, ma
         prompt = user if not last_err else f"{user}\n\nYour previous reply was invalid: {last_err}\nReturn corrected JSON only."
         try:
             raw = _call(system, prompt, fast, max_tokens)
-            return schema.model_validate(extract_json(raw))
+            out = schema.model_validate(extract_json(raw))
+            _reset_streak()
+            return out
         except (ValidationError, json.JSONDecodeError, ValueError) as exc:
             last_err = str(exc)[:800]
-            global LAST_ERROR
             LAST_ERROR = f"invalid output: {last_err[:200]}"
             log.info("LLM output invalid (attempt %d): %s", attempt + 1, type(exc).__name__)
         except Exception as exc:  # network / rate limit
             last_err = ""
             LAST_ERROR = f"{type(exc).__name__}: {str(exc)[:200]}"
             log.info("LLM call failed (attempt %d): %s", attempt + 1, type(exc).__name__)
-            time.sleep(45 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))  # free tiers reset per minute
-    global FAILURES
+            time.sleep(20 * (attempt + 1) if "RateLimit" in type(exc).__name__ else 4 * (attempt + 1))  # free tiers reset per minute
     FAILURES += 1
+    if "RateLimit" in LAST_ERROR or "429" in LAST_ERROR:
+        _RL_STREAK += 1
+        if _RL_STREAK >= 3:
+            UNAVAILABLE = True
+            log.info("LLM rate-limited 3 times in a row: no more calls this run")
+    else:
+        _RL_STREAK = 0
     raise LLMError(f"LLM did not return valid {schema.__name__}")
+
+
+def _reset_streak() -> None:
+    global _RL_STREAK
+    _RL_STREAK = 0
 
 
 def untrusted(text: str, limit: int = 20000) -> str:

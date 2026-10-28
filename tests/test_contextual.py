@@ -155,3 +155,14 @@ def test_travel_always_yes():
     assert ans("Are you willing and able to travel to customer sites approximately once every 4-8 weeks, as business needs require?") == "Yes"
     assert ans("Are you able to travel up to 25% of the time?") == "Yes"
     assert ans("What percentage of travel are you comfortable with?") == "100%"
+
+
+def test_rate_limit_defers_instead_of_asking(monkeypatch):
+    import pytest
+
+    from jobsearch import answers, llm
+
+    monkeypatch.setattr(llm, "UNAVAILABLE", True)
+    fields = [{"field_id": "x", "label": "Which BI tools have you used?", "type": "textarea", "required": True}]
+    with pytest.raises(answers.Deferred):
+        answers.resolve(fields, PROFILE, [], "Engineer", "Acme")

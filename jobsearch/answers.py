@@ -392,6 +392,10 @@ def draft_answer(label: str, company: str, title: str, evidence: list[dict], jd:
         return None
 
 
+class Deferred(Exception):
+    """The model is unavailable (rate limited) and this form needs it: try again later, don't ask the owner."""
+
+
 @dataclass
 class Resolved:
     values: dict[str, str]          # field_id -> answer
@@ -434,6 +438,11 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
                     proposed.update({a.field_id: a for a in out.answers})
                 except LLMError:
                     pass  # stays unknown: required ones become questions, optional ones are left empty
+    from . import llm as _llm
+
+    if _llm.UNAVAILABLE and any(f.get("required") and f["field_id"] not in proposed
+                                and not any(w in f.get("label", "").lower() for w in HARD_STOP_WORDS) for f in todo):
+        raise Deferred()
     values: dict[str, str] = {}
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []
