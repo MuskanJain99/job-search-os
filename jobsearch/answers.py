@@ -80,7 +80,7 @@ def deterministic(fields: list[dict], profile: list[dict], job_location: str = "
     out: dict[str, tuple[str, str | None]] = {}
     for f in fields:
         t = f.get("type")
-        label = re.sub(r"[*:]", "", f.get("label", "")).strip().lower()
+        label = _clean(f.get("label", ""))
         if t == "file":
             if re.search(r"cover letter", label):
                 out[f["field_id"]] = ("__COVER_LETTER__", None)
@@ -131,6 +131,14 @@ _TECH = re.compile(r"\b(go|golang|typescript|javascript|node|java|python|rust|ko
                    r"react|helm|security|sql|spark|kafka)\b")
 
 
+def _clean(raw: str) -> str:
+    """Question text without form decoration: asterisks, '(required)', '(optional)', 'Select...' placeholders."""
+    t = re.sub(r"[*:]", "", raw or "").lower()
+    t = re.sub(r"\((required|optional)\)", " ", t)
+    t = re.sub(r"\s*select\.\.\.\s*$", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def _norm(text: str) -> str:
     return re.sub(r"[\s*:?]+", " ", text.lower()).strip()
 
@@ -144,6 +152,10 @@ def in_india(job_location: str) -> bool | None:
 
 _COUNTRIES_NO = re.compile(r"brazil|colombia|mexico|latin america|argentina|chile|peru|canada|united states|\bus\b|\buk\b|united kingdom|"
                            r"singapore|uae|emirates|germany|ireland|europe|poland|netherlands|france|spain|australia|japan")
+
+
+_EXTRA_FOREIGN = re.compile(r"colombia|czech|denmark|germany|sweden|norway|finland|italy|portugal|romania|bulgaria|hungary|turkey|israel|"
+                            r"new zealand|south africa|nigeria|kenya|egypt|saudi|qatar|hong kong|taiwan|korea|vietnam|thailand|indonesia|malaysia")
 
 
 def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[str, str] | None:
@@ -181,6 +193,23 @@ def _standing(label: str, ftype: str, by_id: dict, india: bool | None) -> tuple[
         return hit("EEO-07")
     if re.search(r"pronoun", label):
         return hit("ID-05")
+    if re.search(r"^legal name|full legal name|name \(if different", label):
+        return hit("ID-03")
+    if re.search(r"^pick date|^select date|^date$|earliest.{0,15}(start|date)|available (from|to start)|start date|date available|when can you (start|join)", label):
+        return hit("NTC-04")
+    if re.search(r"privacy", label) and ftype in ("checkbox", "select", "radio", "combobox", "text"):
+        return hit("CNS-01", "Yes") if "CNS-01" in by_id else None
+    if re.search(r"(eligible|valid)?\s*(work )?authori[sz]ation.{0,25}\bin\b|(able|allowed|permitted|eligible) to work in", label) \
+            and not re.search(r"sponsor|country where you|where you (live|reside)|your country", label):
+        if "india" in label:
+            return hit("AUT-01", "Yes")
+        return None if india is None and not _FOREIGN.search(label) and not _EXTRA_FOREIGN.search(label) else hit("AUT-03", "No")
+    if re.search(r"where do you (currently )?(reside|live)|where are you (currently )?(based|located)", label):
+        return ("India", "LOC-01") if ftype in ("select", "combobox", "radio") else ("Hyderabad, India", "LOC-02")
+    if re.search(r"(desired|target|preferred) (salary|compensation|ctc|pay)|salary (desired|requirement)", label):
+        if ftype == "number":
+            return ("4000000", "CMP-07") if india is not False else None
+        return ("INR 35-40 LPA", "CMP-06")
     # --- identity / contact ---
     if re.search(r"preferred last name|^last name|^family name|^surname", label):
         return hit("ID-02")
@@ -322,7 +351,7 @@ def contextual(label: str, ftype: str, by_id: dict, india: bool | None, total_ye
         return hit("LOC-04")
     if re.search(r"city and state|primary residence", label):
         return hit("LOC-02")
-    if re.search(r"\bcity\b", label) and re.search(r"reside|live|location|^city$|current", label):
+    if re.search(r"\bcity\b", label) and re.search(r"reside|live|locat|^city$|current", label):
         return hit("LOC-02", (v("LOC-02") or "").split(",")[0] or None)
     if re.search(r"^current location|^location$", label):
         return hit("LOC-02")
@@ -440,7 +469,7 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
                     pass  # stays unknown: required ones become questions, optional ones are left empty
     from . import llm as _llm
 
-    pending = [f.get("label", "")[:80] for f in todo if f.get("required") and f["field_id"] not in proposed
+    pending = [f.get("label", "")[:80] for f in todo if f.get("required") and not f.get("label", "").lower().startswith("(optional)") and f["field_id"] not in proposed
                and not any(w in f.get("label", "").lower() for w in HARD_STOP_WORDS)]
     if _llm.UNAVAILABLE and pending:
         raise Deferred(" | ".join(pending[:5]))
@@ -448,7 +477,7 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []
     for f in fields:
-        fid, label, required = f["field_id"], f.get("label", ""), bool(f.get("required"))
+        fid, label, required = f["field_id"], f.get("label", ""), bool(f.get("required")) and not re.match(r"\s*\(optional\)", f.get("label", "").lower())
         a = proposed.get(fid)
         low = label.lower()
         if fid in det and low.strip() not in user_answers:

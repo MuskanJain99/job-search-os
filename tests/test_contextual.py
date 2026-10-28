@@ -166,3 +166,21 @@ def test_rate_limit_defers_instead_of_asking(monkeypatch):
     fields = [{"field_id": "x", "label": "Which BI tools have you used?", "type": "textarea", "required": True}]
     with pytest.raises(answers.Deferred):
         answers.resolve(fields, PROFILE, [], "Engineer", "Acme")
+
+
+def test_fourth_batch_from_deferred_log():
+    P = PROFILE + [{"id": i, "answer_type": "VALUE", "field": f, "answer": a, "applies_when": ""} for i, f, a in [
+        ("ID-03", "full", "Muskan Nahata"), ("NTC-04", "start", "2026-11-01 (November 1, 2026)")]]
+
+    def a2(label, loc="", t="text"):
+        return deterministic([{"field_id": "f", "label": label, "type": t, "options": []}], P, loc).get("f", (None,))[0]
+    assert a2("Location (required)") == "Hyderabad, Telangana"
+    assert a2("Legal Name (if different than above)*") == "Muskan Nahata"
+    assert a2("Do you have an eligible work authorization to work in Colombia?*") == "No"
+    assert a2("Do you have an eligible work authorization to work in India?*") == "Yes"
+    assert a2("Are you able to work in Germany?*") == "No"
+    assert a2("Where do you currently reside?*", t="select") == "India"
+    assert a2("Desired Salary*") == "INR 35-40 LPA"
+    assert a2("Your privacy at GoCardless* Select...", t="select") == "Yes"
+    assert a2("What city are you located in?*") == "Hyderabad"
+    assert a2("Earliest start date") == "2026-11-01 (November 1, 2026)"

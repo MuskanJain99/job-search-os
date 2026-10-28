@@ -36,6 +36,12 @@ FIELDS_JS = r"""
     if (!t) { const lb = el.getAttribute('aria-labelledby'); if (lb) t = lb.split(' ').map(i => (document.getElementById(i)||{}).innerText||'').join(' '); }
     if (!t) { const fs = el.closest('fieldset'); if (fs) { const lg = fs.querySelector('legend'); if (lg) t = lg.innerText; } }
     if (!t) { const c = el.closest('.field, .application-question, [class*="question"], [class*="Field"]'); if (c) { const l = c.querySelector('label, legend, .text, [class*="label"]'); if (l) t = l.innerText; } }
+    if (!t) { let a = el.parentElement;
+      for (let i = 0; i < 5 && a && !t; i++, a = a.parentElement) {
+        for (const l of a.querySelectorAll('label, legend, [class*="label"], [class*="Label"], h3, h4')) {
+          if (!l.contains(el) && !l.querySelector('input, select, textarea') && (l.innerText || '').trim().length > 2) { t = l.innerText; break; }
+        }
+      } }
     if (!t) t = el.getAttribute('placeholder') || el.getAttribute('name') || '';
     return t.replace(/\s+/g, ' ').trim().slice(0, 300);
   };
