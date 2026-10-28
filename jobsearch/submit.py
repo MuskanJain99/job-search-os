@@ -195,12 +195,14 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
 
     by_id = {f["field_id"]: f for f in fields}
     failed = 0
+    failed_fields: list[str] = []
     for fid, value in res.values.items():
         f = by_id.get(fid)
         if not f:
             continue
         if not try_fill(page, f, value, pdf, app.get("cover_letter")):
             failed += 1
+            failed_fields.append(f"{f.get('type')}: {f.get('label', '')[:70]} = {value[:30]}")
     shot = tmp / f"{app_id}.png"
     page.screenshot(path=str(shot), full_page=True)
 
@@ -210,6 +212,7 @@ def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp:
         return
     if failed:
         # A field we meant to fill wasn't fillable: never submit a half-filled form from the cloud.
+        r.audit("submit.fill_failed", "applications", app_id, fields=failed_fields[:6])
         _skip(r, app_id, "a form field could not be filled")
         r.bump("skip_fill_failed")
         return
