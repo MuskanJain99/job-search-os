@@ -440,9 +440,10 @@ def resolve(fields: list[dict], profile: list[dict], evidence: list[dict], job_t
                     pass  # stays unknown: required ones become questions, optional ones are left empty
     from . import llm as _llm
 
-    if _llm.UNAVAILABLE and any(f.get("required") and f["field_id"] not in proposed
-                                and not any(w in f.get("label", "").lower() for w in HARD_STOP_WORDS) for f in todo):
-        raise Deferred()
+    pending = [f.get("label", "")[:80] for f in todo if f.get("required") and f["field_id"] not in proposed
+               and not any(w in f.get("label", "").lower() for w in HARD_STOP_WORDS)]
+    if _llm.UNAVAILABLE and pending:
+        raise Deferred(" | ".join(pending[:5]))
     values: dict[str, str] = {}
     prov: list[dict] = []
     blockers: list[tuple[str, str]] = []

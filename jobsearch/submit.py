@@ -98,7 +98,7 @@ def run() -> None:
         budget = max(0, cfg["max_applications_per_day"] - (usage["applications_today"] or 0))
         queue = conn.execute(
             """select a.id, a.channel, a.resume_version_id, a.cover_letter, j.url, j.title, j.jd_text, j.status as job_status,
-                      c.name as company, c.ats_token, f.score
+                      c.name as company, c.ats as company_ats, c.ats_token, f.score
                from applications a join jobs j on j.id=a.job_id left join companies c on c.id=j.company_id
                left join lateral (select score from fit_scores where job_id=j.id order by created_at desc limit 1) f on true
                where a.status='READY' and a.next_action in ('submit','laptop_submit') and a.channel = any(%s)
@@ -129,8 +129,9 @@ def run() -> None:
                 ctx = browser.new_context(locale="en-IN", timezone_id="Asia/Kolkata", viewport={"width": 1366, "height": 900})
                 try:
                     submit_one(r, ctx.new_page(), app, header, profile, evidence, Path(tmp))
-                except answers.Deferred:
-                    r.bump("deferred_llm")  # model rate-limited: stays READY for the next run, nobody is asked
+                except answers.Deferred as d:
+                    r.bump("deferred_llm")
+                    r.audit("submit.deferred", "applications", str(app["id"]), needs=str(d)[:400])  # model rate-limited: stays READY for the next run, nobody is asked
                 except Exception as exc:
                     r.bump("errors")
                     page_info = {}
@@ -158,10 +159,13 @@ def _skip(r: db.Run, app_id: str, why: str) -> None:
 def submit_one(r: db.Run, page, app: dict, header: dict, profile, evidence, tmp: Path) -> None:
     conn, app_id = r.conn, str(app["id"])
     pdf = resume_pdf.resume_for(conn, app, header, tmp / app_id)
-    url = _apply_url(app["channel"], app["url"], app.get("ats_token"))
+    on_gh = app["channel"] == "greenhouse" or (app.get("company_ats") == "greenhouse" and "gh_jid=" in app["url"])
+    url = _apply_url("greenhouse" if on_gh else app["channel"], app["url"], app.get("ats_token"))
     resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(2500)
     body = page.inner_text("body").lower()[:20000]
+    if "error=true" in page.url:  # Greenhouse sends removed jobs to the board with ?error=true
+        body += " job is closed"
     if (resp and resp.status == 404) or any(t in body for t in ("no longer accepting", "job is closed", "position has been filled", "no longer available")):
         db.set_application_status(r, app_id, "CLOSED", next_action=None)
         conn.execute("update jobs set status='CLOSED' where url=%s", (app["url"],))
@@ -258,6 +262,10 @@ def fill(page, f: dict, value: str, pdf: Path, cover: str | None) -> None:
             loc.set_input_files(str(p))
         return
     years = _years(value)
+    mn = re.search(r"(\d+)\+?\s*(?:years|yrs)", f.get("label", "").lower())
+    if years is not None and mn and t in ("select", "radio", "combobox") and \
+            re.search(r"^(do|have|are|can)\b", f.get("label", "").strip().lower()):
+        value, years = ("Yes" if years >= int(mn.group(1)) else "No"), None  # "Do you have 6+ years…?" is yes/no, not a range
     if t == "select":
         opts = loc.evaluate("el => [...el.options].map(o => o.text.trim())")
         if years is not None and ranges.looks_like_ranges(opts):

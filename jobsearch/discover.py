@@ -211,7 +211,7 @@ def process(r: db.Run, p: Posting, company: str, loc, cfg, evidence, skeleton, p
 
 def prepare(r: db.Run, job_id: str, p: Posting, company: str, score: int, evidence, skeleton, profile) -> str:
     conn = r.conn
-    channel = aggregators.apply_channel(p.apply_url or p.url)
+    channel = "greenhouse" if p.ats == "greenhouse" and p.token else aggregators.apply_channel(p.apply_url or p.url)
     priority = _rank(p)  # location priority decides the apply order (fit score only breaks ties)
     app = conn.execute(
         """insert into applications (job_id, status, priority, discovered_via, channel, next_action)
